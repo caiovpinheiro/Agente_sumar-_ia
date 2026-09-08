@@ -83,30 +83,39 @@ export function resolvePoloUnidadeCode(poloId, env = process.env) {
   return entry?.unidadeDefault || String(env?.SUMARE_CAPTACAO_UNIDADE_DEFAULT || 'ED_SP_P5').trim()
 }
 
-/**
- * Identifica polo a partir da mensagem do lead (número 1-5 ou nome).
- * @returns {SumarePoloEntry|null}
- */
-function matchPoloFromAssistantNumberedList(historyMessages, n) {
+function lastAssistantContent(historyMessages = []) {
   const assistants = (historyMessages || []).filter(
     (m) => m.role === 'assistant' || m.role === 'assistente',
   )
-  for (let i = assistants.length - 1; i >= 0; i--) {
-    const content = String(assistants[i]?.content || '')
-    const found = new Map()
-    const re = /(?:^|\n)\s*(\d)\.\s*\*?([^*\n—-]+)/g
-    let m
-    while ((m = re.exec(content)) !== null) {
-      const name = String(m[2] || '').replace(/\s*[—-].*$/, '').trim()
-      const polo = SUMARE_POLOS_EAD.find(
-        (p) => normalizePoloText(p.nome) === normalizePoloText(name) ||
-          p.aliases.some((a) => normalizePoloText(name).includes(a)),
-      )
-      if (polo) found.set(Number(m[1]), polo)
-    }
-    if (found.has(n)) return found.get(n)
+  if (!assistants.length) return ''
+  return String(assistants[assistants.length - 1]?.content || '')
+}
+
+function matchPoloFromAssistantNumberedList(content, n) {
+  const found = new Map()
+  const re = /(?:^|\n)\s*(\d)\.\s*\*?([^*\n—-]+)/g
+  let m
+  while ((m = re.exec(String(content || ''))) !== null) {
+    const name = String(m[2] || '').replace(/\s*[—-].*$/, '').trim()
+    const polo = SUMARE_POLOS_EAD.find(
+      (p) =>
+        normalizePoloText(p.nome) === normalizePoloText(name) ||
+        p.aliases.some((a) => normalizePoloText(name).includes(a)),
+    )
+    if (polo) found.set(Number(m[1]), polo)
   }
-  return null
+  return found.get(n) || null
+}
+
+function assistantLastMessageIsPoloChoiceList(content) {
+  const t = String(content || '')
+  if (!t.trim()) return false
+  if (assistantAskedPoloPreFormChoice(t)) return true
+  let poloHits = 0
+  for (const p of SUMARE_POLOS_EAD) {
+    if (normalizePoloText(t).includes(normalizePoloText(p.nome))) poloHits += 1
+  }
+  return poloHits >= 2 && /(?:^|\n)\s*\d[\.\)]\s*/m.test(t)
 }
 
 /**
@@ -121,8 +130,12 @@ export function matchPoloFromUserMessage(text, historyMessages) {
   const numMatch = t.match(/^\s*([1-5])\s*$/) || t.match(/\bop[cç][aã]o\s*([1-5])\b/)
   if (numMatch) {
     const n = Number(numMatch[1])
-    const fromList = matchPoloFromAssistantNumberedList(historyMessages, n)
-    if (fromList) return fromList
+    const hasHistory = Array.isArray(historyMessages) && historyMessages.length > 0
+    if (hasHistory) {
+      const lastAssist = lastAssistantContent(historyMessages)
+      if (!assistantLastMessageIsPoloChoiceList(lastAssist)) return null
+      return matchPoloFromAssistantNumberedList(lastAssist, n)
+    }
     const idx = n - 1
     if (idx >= 0 && idx < SUMARE_POLOS_EAD.length) return SUMARE_POLOS_EAD[idx]
   }

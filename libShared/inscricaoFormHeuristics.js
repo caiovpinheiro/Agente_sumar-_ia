@@ -655,6 +655,29 @@ export function buildCursoIndisponivelSemAlternativasReply(opts = {}) {
   )
 }
 
+/**
+ * Curso existe na planilha oficial de preços, mas não tem código na API de captação
+ * de graduação — não sugerir outros cursos nem gerar candidato de vestibular.
+ */
+export function buildCursoOficialSemCodigoCaptacaoReply(opts = {}) {
+  const nameBit = opts.pushName ? `, ${String(opts.pushName).split(/\s+/)[0]}` : ''
+  const preco = opts.precoResumo && typeof opts.precoResumo === 'object' ? opts.precoResumo : {}
+  const cursoNome =
+    String(preco.cursoNome || opts.cursoPedido || '').trim() || 'o curso informado'
+  const nivel = String(preco.nivel || '').trim()
+  const modalidade = String(preco.modalidade || '').trim()
+  const duracao = String(preco.duracao || '').trim()
+  const mensalidade = String(preco.mensalidade || '').trim()
+  const bits = [nivel, modalidade, duracao && `duração ${duracao}`, mensalidade].filter(Boolean)
+  const detalhe = bits.length ? ` (${bits.join(', ')})` : ''
+  return (
+    `Obrigado${nameBit}! Recebemos o seu formulário. ` +
+    `Confirmamos o curso *${cursoNome}*${detalhe} no catálogo oficial da Sumaré. ` +
+    `A matrícula automática do portal de graduação não se aplica a esta oferta, então não vou registrar outro curso nem enviar um link de pagamento de vestibular. ` +
+    `Para concluir esta matrícula, use o Portal do Aluno ou o atendimento oficial: https://sumare.edu.br/atendimento/`
+  )
+}
+
 export function buildInscricaoFormCompleteReply(opts = {}) {
   const nameBit = opts.pushName ? `, ${String(opts.pushName).split(/\s+/)[0]}` : ''
   if (opts.ok) {

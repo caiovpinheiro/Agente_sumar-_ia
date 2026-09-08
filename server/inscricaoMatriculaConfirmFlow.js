@@ -201,7 +201,7 @@ export async function lookupRelatedCursoOfertas(env, cursoNome, { limit = 3 } = 
   const targetSet = new Set(targetTokens)
 
   const exactResumo = await lookupCursoPrecoResumo(env, cursoNome)
-  const excludeKey = exactResumo ? normalizeForMatch(exactResumo.cursoNome) : ''
+  if (exactResumo) return []
 
   const rows = await fetchPrecoRows(env)
   /** @type {Array<{ cursoNome: string, nivel: string, modalidade: string, duracao: string, mensalidade: string, inter: number, proximity: number }>} */
@@ -220,8 +220,6 @@ export async function lookupRelatedCursoOfertas(env, cursoNome, { limit = 3 } = 
     if (!mensalidade) continue
     const nomeCurso = extractOfertaNomeFromPrecoMap(map)
     if (!nomeCurso) continue
-    const nomeKey = normalizeForMatch(nomeCurso)
-    if (excludeKey && nomeKey === excludeKey) continue
 
     const union = new Set([...targetSet, ...candSet]).size
     const proximity = union > 0 ? inter / union : 0

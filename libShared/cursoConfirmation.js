@@ -114,7 +114,8 @@ const CURSO_NAME_STOP_TOKENS = new Set([
 /**
  * Corta o nome no primeiro token "de lixo" (verbo/modalidade/preço…).
  * Mantém conectivos `e/de/da/do/das/dos` para nomes compostos como
- * "Análise e Desenvolvimento de Sistemas". Limita a 5 tokens.
+ * "Análise e Desenvolvimento de Sistemas" e pós longas
+ * ("Educação Infantil e Desenvolvimento da Linguagem").
  */
 function sanitizeCursoName(rawName) {
   if (!rawName) return ''
@@ -125,7 +126,7 @@ function sanitizeCursoName(rawName) {
     const t = tok.toLowerCase()
     if (CURSO_NAME_STOP_TOKENS.has(t)) break
     kept.push(tok)
-    if (kept.length >= 5) break
+    if (kept.length >= 12) break
   }
   if (kept.length === 0) return ''
   const limited = kept.join(' ')

@@ -144,6 +144,37 @@ checks.push(
   ],
 )
 
+const ruteHist = [
+  {
+    role: 'assistant',
+    content:
+      'Perfeito! Então, ficou assim:\n- Você irá ingressar no curso de "Educação Infantil e Desenvolvimento da Linguagem" com duração de 6 meses',
+  },
+  { role: 'user', content: '📋 Resposta do formulário — Data de Nascimento 12/02/1985' },
+  {
+    role: 'assistant',
+    content:
+      '1. *Educação Física - Bacharelado*\n2. *Educação Física - Licenciatura*\n3. *Análise e Desenvolvimento de Sistemas*',
+  },
+  { role: 'user', content: '1' },
+]
+const ruteCtx = extractTransferenciaContext(ruteHist)
+checks.push(
+  ['rute sem transferência no contexto', ruteCtx == null],
+  ['rute data ≠ semestre', parseSemestreFromUserMessage('12/02/1985') == null],
+)
+
+if (process.env.SUMARE_CAPTACAO_TOKEN) {
+  const adsTrap = await resolveTransferenciaCursoCodigo(
+    process.env,
+    'Educação Infantil e Desenvolvimento da Linguagem',
+  )
+  checks.push([
+    'rute pós não resolve para ADS_EAD',
+    !adsTrap || String(adsTrap.codigo || '').toUpperCase() !== 'ADS_EAD',
+  ])
+}
+
 let fail = 0
 for (const [name, ok] of checks) {
   console.log(ok ? 'OK' : 'FAIL', name)

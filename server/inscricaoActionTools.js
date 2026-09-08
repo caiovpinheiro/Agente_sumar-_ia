@@ -520,6 +520,24 @@ export async function runRegistrarTransferencia(env, args = {}, ctx = {}) {
     }
   }
 
+  const historyBlob = (ctx.historyMessages || [])
+    .map((m) => String(m?.content || ''))
+    .join('\n')
+  const hasTransferEvidence =
+    /outra\s+faculdade|transfer[eê]ncia|aproveitamento|parou\s+no|tranquei|parei\s+no|terminei\s+no|cursava|cursando\s+.+\s+em\s+outr|comecei\s+.+\s+em\s+outra/i.test(
+      historyBlob,
+    ) || /aproveitamento\s+de\s+(mat[eé]rias|disciplinas)/i.test(historyBlob)
+  if ((ctx.historyMessages || []).length > 0 && !hasTransferEvidence) {
+    return {
+      ok: false,
+      code: 'TRANSFERENCIA_SEM_EVIDENCIA',
+      text: 'Histórico sem evidência de transferência/aproveitamento — tool ignorada.',
+      replyOverride: null,
+      ctxSnapshot: { inscricaoActionTool: 'registrar_transferencia', error: 'sem_evidencia' },
+      steps: [{ type: 'tool_action', tool: 'registrar_transferencia', ok: false, code: 'TRANSFERENCIA_SEM_EVIDENCIA' }],
+    }
+  }
+
   const faltando = []
   if (!cursoOrigemRaw) faltando.push('curso de origem (o que você cursou/cursa)')
   if (!semestreRaw) faltando.push('último semestre concluído')

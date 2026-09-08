@@ -278,17 +278,22 @@ export async function resolveTransferenciaCursoCodigo(env, input) {
   const key = normalizeCursoNomeKey(raw)
   if (!key) return null
   let m = cursos.find((c) => normalizeCursoNomeKey(c.descricao) === key)
-  if (!m) m = cursos.find((c) => normalizeCursoNomeKey(c.descricao).includes(key) || key.includes(normalizeCursoNomeKey(c.descricao)))
+  if (!m) {
+    m = cursos.find((c) => {
+      const ck = normalizeCursoNomeKey(c.descricao)
+      return ck === key || (key.length >= 12 && (ck.includes(key) || key.includes(ck)))
+    })
+  }
   if (!m) {
     const tokens = key.split(/\s+/).filter((t) => t.length > 2)
-    if (tokens.length) {
+    if (tokens.length >= 2) {
       const ranked = cursos
         .map((c) => {
           const ck = normalizeCursoNomeKey(c.descricao)
           const hits = tokens.filter((t) => ck.includes(t)).length
           return { c, hits }
         })
-        .filter((x) => x.hits > 0)
+        .filter((x) => x.hits >= 2)
         .sort((a, b) => b.hits - a.hits)
       if (ranked.length === 1 || (ranked.length > 1 && ranked[0].hits > ranked[1].hits)) {
         m = ranked[0].c

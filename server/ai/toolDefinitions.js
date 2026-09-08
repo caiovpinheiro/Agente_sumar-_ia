@@ -185,7 +185,8 @@ export const TOOL_DEFINITIONS = [
         'quer voltar a cursar aproveitando o que já fez, ou pedir transferência. ' +
         'Antes de chamar, colete e confirme: curso de origem (o que cursou/cursa), último semestre concluído e curso desejado na Sumaré. ' +
         'O servidor grava esses dados e segue para o polo + formulário (mesmo fluxo da matrícula). ' +
-        'NÃO use para ingresso normal (vestibular) — nesse caso use enviar_form_sumar_inscricao.',
+        'NÃO use para ingresso normal (vestibular ou pós sem transferência) — nesse caso use enviar_form_sumar_inscricao. ' +
+        'NÃO chame se o lead só escolheu um número de lista de cursos, só pediu matrícula, ou se o "semestre" veio de data de nascimento/CPF.',
       parameters: {
         type: 'object',
         properties: {

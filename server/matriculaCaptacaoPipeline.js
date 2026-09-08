@@ -25,7 +25,7 @@ import {
   extractCandidatoStatusString,
 } from './sumareCaptacaoClient.js'
 import { analyzeCursoInscricaoSnapshot } from '../libShared/captacaoSnapshotSanitize.js'
-import { lookupRelatedCursoOfertas } from './inscricaoMatriculaConfirmFlow.js'
+import { lookupCursoPrecoResumo, lookupRelatedCursoOfertas } from './inscricaoMatriculaConfirmFlow.js'
 
 const DEDUPE_MS = 6 * 60 * 60 * 1000
 const _linkSentMemory = new Map()
@@ -199,6 +199,18 @@ export async function runMatriculaCaptacaoAfterForm(env, ctx) {
       cursoPedido &&
       (cursoCheck.code === 'CURSO_NAO_RESOLVIDO' || cursoCheck.code === 'CURSO_INVALIDO_SNAPSHOT')
     ) {
+      const precoResumo = await lookupCursoPrecoResumo(env, cursoPedido).catch(() => null)
+      if (precoResumo) {
+        return {
+          ok: false,
+          code: 'CURSO_OFICIAL_SEM_CODIGO_CAPTACAO',
+          error: `Curso "${cursoPedido}" existe no catálogo oficial, mas não tem código na API de captação`,
+          missing: cursoCheck.missing,
+          cursoPedido,
+          precoResumo,
+          alternativas: [],
+        }
+      }
       const alternativas = await lookupRelatedCursoOfertas(env, cursoPedido, { limit: 3 }).catch(
         () => [],
       )

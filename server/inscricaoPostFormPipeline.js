@@ -22,6 +22,7 @@ import {
   buildAskCursoAfterFormReply,
   buildCursoIndisponivelAlternativasReply,
   buildCursoIndisponivelSemAlternativasReply,
+  buildCursoOficialSemCodigoCaptacaoReply,
   buildFormNotReceivedResendReply,
   matriculaPosFormAlreadyProcessed,
   inscricaoFormAlreadyFilled,
@@ -577,9 +578,26 @@ export async function executeCaptacaoAfterFormResolved(env, ctx) {
       // Somente CURSO_AUSENTE: NÃO use !cursoPedido — MISSING_FIELDS (cpf/email/etc.)
       // não propaga cursoPedido mesmo com curso já resolvido (regressão pós-Amanda).
       const cursoReallyAbsent = cap.code === 'CURSO_AUSENTE'
-      // Curso ausente (snapshot vazio) → pede o nome (regressão Aline #24120625).
-      // Curso presente mas não resolvido → informa indisponibilidade (+ alternativas).
-      if (cursoPresentUnresolved) {
+      if (cap.code === 'CURSO_OFICIAL_SEM_CODIGO_CAPTACAO') {
+        reply = buildCursoOficialSemCodigoCaptacaoReply({
+          pushName,
+          cursoPedido,
+          precoResumo: cap.precoResumo,
+        })
+        aguardandoDistribuicaoStep = 'curso_oficial_sem_codigo_captacao'
+        captacaoFailReason = 'curso_oficial_sem_codigo_captacao'
+        await noteAtendimentoNaoConcluido(env, {
+          leadId: idLead,
+          executionId,
+          code: cap.code,
+          reason: 'curso oficial sem código de captação — não gerar vestibular',
+          replyKind: 'curso_oficial_sem_codigo_captacao',
+        })
+        await setFormStatus(env, telefone, INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO).catch(() => {})
+        ctxForm = INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO
+        captacaoFailedTerminal = false
+        auditNoted = true
+      } else if (cursoPresentUnresolved) {
         if (alternativas.length > 0) {
           reply = buildCursoIndisponivelAlternativasReply({ pushName, cursoPedido, alternativas })
           aguardandoDistribuicaoStep = 'curso_indisponivel_com_alternativas'

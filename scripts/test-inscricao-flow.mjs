@@ -2862,6 +2862,179 @@ section('35 — Alteração/troca de polo → Regra 32 (regressão Silvia #23903
   )
 }
 
+section('36 — Acesso AVA/plataforma do aluno (regressão Valquíria #23690)')
+
+{
+  const { tryHandleAcademicAffairsInquiry } = await import('../server/academicAffairsFlow.js')
+
+  assertEqual(
+    messageAsksAcademicAffairsSupportInText(
+      'não consigo entrar em nada na plataforma, fica travado nesta tela e o campo de email não consigo digitar',
+    ),
+    true,
+    '36.1 plataforma travada + email',
+  )
+  assertEqual(
+    messageAsksAcademicAffairsSupportInText('ao acessar AVA a tela fica travada'),
+    true,
+    '36.2 AVA tela travada',
+  )
+  assertEqual(
+    messageAsksAcademicAffairsSupportInText(
+      'Recebi o email de Bem vindo ao Semipresencial com login RA, porem ao acessar AVA a tela fica travada. Como faço para acessar o curso?',
+    ),
+    true,
+    '36.3 login RA + AVA travado',
+  )
+  assertEqual(
+    messageAsksAcademicAffairsSupportInText('o formulário não abre'),
+    false,
+    '36.4 formulário WhatsApp não abre ≠ acadêmico',
+  )
+  assertEqual(
+    messageAsksAcademicAffairsSupportInText(
+      'quero fazer a inscrição para a Licenciatura em Pedagogia mas o formulário não abre',
+    ),
+    false,
+    '36.5 inscrição + formulário não abre ≠ acadêmico',
+  )
+  assertEqual(
+    messageAsksAcademicAffairsSupportInText('qual o valor da mensalidade?'),
+    false,
+    '36.6 valor comercial continua fora',
+  )
+
+  const hist = [
+    {
+      role: 'user',
+      content:
+        'não consigo entrar em nada na plataforma, fica travado nesta tela e o campo de email não consigo digitar',
+    },
+  ]
+  const { messageAsksAcademicAffairsSupport } = await import('../libShared/academicAffairsHeuristics.js')
+  assertEqual(
+    messageAsksAcademicAffairsSupport('Desejo falar com atendente urgente', hist),
+    true,
+    '36.7 follow-up atendente após problema de plataforma',
+  )
+
+  const valquiria = await tryHandleAcademicAffairsInquiry(
+    {},
+    {
+      userMessage:
+        'ao acessar AVA a tela fica travada na opção Preferências / Conta de usuário. Como faço para acessar o curso?',
+      historyMessages: [],
+      executionId: 'test-valquiria-23690',
+      model: 'test',
+      pushName: 'Valquiria',
+      t0: Date.now(),
+    },
+  )
+  assert(valquiria?.handled === true, '36.8 Valquíria handled')
+  assertEqual(
+    valquiria?.result?.orchestratorSteps?.[0]?.type,
+    'academic_affairs_redirect',
+    '36.8b step academic_affairs_redirect',
+  )
+  const reply = String(valquiria?.result?.reply || '')
+  assert(/portal do aluno/i.test(reply), '36.8c Portal do Aluno')
+  assert(reply.includes('sumare.edu.br/atendimento'), '36.8d atendimento')
+  assert(/ouvidoria/i.test(reply), '36.8e ouvidoria')
+  assert(!/consultor/i.test(reply), '36.8f não promete consultor')
+}
+
+section('37 — Rute #24045: nome longo, número após lista de cursos, semestre ≠ data')
+{
+  const { detectCursoConfirmadoPeloLead, __test } = await import('../libShared/cursoConfirmation.js')
+  const { matchPoloFromUserMessage, formatPoloListaNumerada } = await import(
+    '../libShared/sumarePoloCatalog.js'
+  )
+  const { parseSemestreFromUserMessage, extractTransferenciaContext } = await import(
+    '../server/inscricaoTransferenciaFlow.js'
+  )
+  const { buildCursoOficialSemCodigoCaptacaoReply } = await import(
+    '../libShared/inscricaoFormHeuristics.js'
+  )
+
+  const nomePos = 'Educação Infantil e Desenvolvimento da Linguagem'
+  assertEqual(
+    __test.sanitizeCursoName(nomePos),
+    'Educação Infantil e Desenvolvimento da Linguagem',
+    '37.1 sanitizeCursoName não trunca pós de 6 tokens',
+  )
+  assertEqual(
+    detectCursoConfirmadoPeloLead('Sim', [
+      {
+        role: 'assistant',
+        content: `Você irá ingressar no curso de "${nomePos}" com duração de 6 meses. Você autoriza a conclusão da matrícula?`,
+      },
+    ]),
+    nomePos,
+    '37.2 "Sim" após resumo grava o nome completo',
+  )
+
+  const listaPolos = `em qual polo?\n${formatPoloListaNumerada()}`
+  const listaCursos =
+    'Não localizei a oferta exata de "Educação Infantil e Desenvolvimento da" no catálogo atual da Sumaré. Encontrei estas opções relacionadas:\n\n' +
+    '1. *Educação Física - Bacharelado* — graduação, Semipresencial, 8 Semestres, R$ 177,00\n' +
+    '2. *Educação Física - Licenciatura* — graduação, Semipresencial, 8 Semestres, R$ 149,00\n' +
+    '3. *Análise e Desenvolvimento de Sistemas* — graduação, EAD, 5 Semestres, R$ 97,00'
+
+  assertEqual(
+    matchPoloFromUserMessage('3', [{ role: 'assistant', content: listaPolos }])?.nome,
+    'Santana',
+    '37.3 "3" após lista de polos = Santana',
+  )
+  assertEqual(
+    matchPoloFromUserMessage('1', [
+      { role: 'assistant', content: listaPolos },
+      { role: 'user', content: '3' },
+      { role: 'assistant', content: listaCursos },
+    ])?.nome,
+    undefined,
+    '37.4 "1" após lista de cursos NÃO vira Barra Funda',
+  )
+  assertEqual(matchPoloFromUserMessage('4')?.nome, 'São Miguel', '37.5 "4" sem histórico ainda é catálogo')
+
+  assertEqual(parseSemestreFromUserMessage('12/02/1985'), null, '37.6 data de nascimento ≠ semestre')
+  assertEqual(
+    parseSemestreFromUserMessage('Data de Nascimento 12/02/1985 CPF 34519304806'),
+    null,
+    '37.7 dump do formulário ≠ semestre',
+  )
+  assertEqual(parseSemestreFromUserMessage('Como falei parei no quarto semestre'), '4', '37.8 semestre ordinal')
+
+  const ruteHist = [
+    {
+      role: 'assistant',
+      content: `Perfeito! Então, ficou assim:\n- Você irá ingressar no curso de "${nomePos}" com duração de 6 meses`,
+    },
+    { role: 'user', content: '📋 Resposta do formulário\nData de Nascimento\n12/02/1985' },
+    { role: 'assistant', content: listaCursos },
+    { role: 'user', content: '1' },
+  ]
+  assertEqual(
+    extractTransferenciaContext(ruteHist),
+    null,
+    '37.9 sem evidência de transferência o contexto é nulo',
+  )
+
+  const oficial = buildCursoOficialSemCodigoCaptacaoReply({
+    pushName: 'Rute',
+    cursoPedido: nomePos,
+    precoResumo: {
+      cursoNome: nomePos,
+      nivel: 'pós-graduação',
+      modalidade: 'EAD',
+      duracao: '6 Meses',
+      mensalidade: 'R$ 187,00',
+    },
+  })
+  assert(/Confirmamos o curso/i.test(oficial), '37.10 reply confirma oferta oficial')
+  assert(!/Educação Física/i.test(oficial), '37.11 reply não sugere Educação Física')
+  assert(!/pagamento da matrícula/i.test(oficial), '37.12 reply não envia link de vestibular')
+}
+
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Resumo                                                                     */
 /* ────────────────────────────────────────────────────────────────────────── */

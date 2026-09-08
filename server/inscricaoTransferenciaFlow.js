@@ -249,8 +249,18 @@ export function parseSemestreFromUserMessage(message) {
     .replace(/\p{M}/gu, '')
     .toLowerCase()
 
+  const hasSemestreCue =
+    /(?:ultimo\s+semestre|semestre\s+conclu|semestre\s+cursado|parei\s+no|parou\s+no|tranquei|terminei\s+no)\b/i.test(
+      norm,
+    )
+
+  // Data de nascimento / CPF no formulário nunca é semestre (Rute #24045).
+  if (/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b/.test(norm) && !hasSemestreCue) return null
+  const onlyDigits = norm.replace(/\D/g, '')
+  if (onlyDigits.length >= 8 && !hasSemestreCue) return null
+
   const yearMatch =
-    norm.match(/(?:último\s+semestre|semestre\s+conclu[ií]do|semestre\s+cursado)\s*(?:de\s+)?(\d{4})\b/i) ||
+    norm.match(/(?:ultimo\s+semestre|semestre\s+conclu[ií]do|semestre\s+cursado)\s*(?:de\s+)?(\d{4})\b/i) ||
     norm.match(/\bsemestre\s+de\s+(\d{4})\b/i)
   if (yearMatch?.[1]) return yearMatch[1]
 
@@ -259,14 +269,17 @@ export function parseSemestreFromUserMessage(message) {
   }
 
   const semMatch = norm.match(
-    /(?:último\s+semestre|semestre\s+conclu[ií]do|semestre\s+cursado)\s*(?:de\s+)?(\d{1,2})\b/i,
+    /(?:ultimo\s+semestre|semestre\s+conclu[ií]do|semestre\s+cursado)\s*(?:de\s+)?(\d{1,2})\b/i,
   )
   if (semMatch?.[1]) return semMatch[1]
 
-  const digit = norm.match(/\b(\d{1,2})\b/)
-  if (digit) return digit[1]
+  // Dígito isolado só vale como semestre se a mensagem INTEIRA for o número
+  // (resposta a "qual semestre?"). Não extrair "1"/"12" de listas, CPF ou data.
+  if (/^\s*\d{1,2}\s*$/.test(norm)) {
+    const n = Number(norm.trim())
+    if (n >= 1 && n <= 12) return String(n)
+  }
 
-  if (/^\d{1,4}$/.test(norm.replace(/\D/g, ''))) return norm.replace(/\D/g, '')
   return null
 }
 
@@ -363,6 +376,8 @@ export function extractTransferenciaFromHistory(historyMessages = []) {
  * (lead informa origem+semestre; assistente confirma destino; lead confirma com "sim").
  */
 export function extractTransferenciaContext(historyMessages = []) {
+  if (!conversationMentionsTransferencia(historyMessages)) return null
+
   let origem = null
   let destino = null
   let semestre = null

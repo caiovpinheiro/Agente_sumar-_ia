@@ -12,6 +12,20 @@ Histórico das decisões estruturais do agente. Formato por entrada:
 
 ---
 
+### 2026-09-08 - Proteções contra matrícula/curso/polo/transferência fabricados (Rute #24045)
+- **Modelo usado**: Cursor Grok 4.6
+- **Decisão**: Cinco guardas determinísticas. (1) `sanitizeCursoName` deixa de cortar em 5 tokens (passa a 12) para não gravar pós longas truncadas. (2) Número 1–5 só casa polo na *última* lista do assistente se essa lista for de polos; lista de cursos ou histórico antigo não sobrescreve polo já escolhido. (3) `parseSemestreFromUserMessage` ignora data de nascimento/CPF; `extractTransferenciaContext` só existe com evidência de transferência no histórico. (4) `registrar_transferencia` recusa histórico sem evidência; o hint do LLM só manda chamar a tool com origem+destino+semestre completos. (5) Resolvedor de transferência exige ≥2 tokens compartilhados; pós presente na planilha de preços e ausente na API de captação não gera candidato de vestibular nem alternativas de graduação (`CURSO_OFICIAL_SEM_CODIGO_CAPTACAO`).
+- **Contexto**: Rute #24045 pediu pós Educação Infantil e Desenvolvimento da Linguagem, escolheu polo Santana e preencheu o form. O card truncou o curso, o pós-form disse que a oferta não existia, o “1” da lista de alternativas virou Barra Funda, o modelo chamou transferência com semestre 12 (nascimento 12/02/1985) e o resolvedor mapeou a pós para `ADS_EAD`. O portal mostrou Ciências Contábeis.
+- **Alternativas descartadas**: Corrigir só o lead; confiar no LLM; aceitar 1 token (`desenvolvimento` → ADS); varrer listas antigas de polo.
+- **Impacto**: Matrícula automática deixa de fabricar transferência/curso/polo neste padrão. Pós sem código de captação confirma a oferta oficial e aponta atendimento, sem link de vestibular. O cadastro já gerado da Rute permanece para correção operacional.
+
+### 2026-09-08 - Acesso ao AVA/plataforma do aluno entra na Regra 32
+- **Modelo usado**: Grok 4.6 (não confirmado)
+- **Decisão**: Falha de acesso ao AVA, plataforma do aluno, login/RA/senha de primeiro acesso, tela travada ou envio de documentação no ambiente do aluno é assunto institucional da Regra 32 e recebe `buildAcademicAffairsRedirectReply`. Não promete consultor. O formulário de inscrição do WhatsApp que não abre permanece no fluxo comercial de reenvio.
+- **Contexto**: Valquíria Aidar #23690 recebeu login do Semipresencial, a tela do AVA travou em preferências/perfil e o agente prometeu consultor e pediu confirmação de saída de canal.
+- **Alternativas descartadas**: Handoff humano genérico; tratar qualquer “não está funcionando” como acadêmico (capturaria o Flow do WhatsApp).
+- **Impacto**: Pedidos posteriores de atendente no mesmo histórico acadêmico passam a ser interceptados pelo redirect institucional, que já roda antes do handoff.
+
 ### 2026-09-04 - Link de pagamento move o card para Aguardando pagamento
 - **Modelo usado**: Cursor Grok 4.6
 - **Decisão**: Assim que o agente encaminha o link de pagamento da matrícula (`matricula.sumare.edu.br/Vestibular/pagamento`), o deal EduIT sai de Inscrição (`cmt38aydx01q7rw01w0of9px5`) e vai para Aguardando pagamento (`cmt38aydx01q8rw010d91vy1t`). A fila de pagamento entra no funil da IA no EduIT para o agente ainda reenviar o link e receber o comprovante. Snapshot incompleto ou formulário sem link permanece em Inscrição.

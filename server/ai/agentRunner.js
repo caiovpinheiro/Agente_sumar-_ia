@@ -1629,20 +1629,28 @@ export async function runAgent(env, input) {
     (inscricaoStage && inscricaoFormAlreadyFilled({ inscricao_form_status: inscricaoStage }))
 
   const transferenciaCtx = extractTransferenciaContext(historyMessages)
+  const transferenciaMentioned = conversationMentionsTransferencia(historyMessages)
   const transferenciaFlowHint =
-    (transferenciaCtx || conversationMentionsTransferencia(historyMessages)) &&
-    !messageAsksCoursePrice(userMessage)
+    transferenciaMentioned && !messageAsksCoursePrice(userMessage)
       ? {
           role: 'system',
-          content:
-            'TRANSFERÊNCIA/APROVEITAMENTO DE MATÉRIAS EM ANDAMENTO' +
-            (transferenciaCtx?.origem ? ` — curso de origem: ${transferenciaCtx.origem}` : '') +
-            (transferenciaCtx?.destino ? ` — curso desejado na Sumaré: ${transferenciaCtx.destino}` : '') +
-            (transferenciaCtx?.semestre ? ` — último semestre informado: ${transferenciaCtx.semestre}` : '') +
-            '. O lead já informou ou confirmou os dados da transferência. ' +
-            'OBRIGATÓRIO: chame registrar_transferencia(telefone, curso_origem, semestre_concluido, curso_desejado) com os dados do histórico — NÃO pergunte novamente qual curso ele deseja. ' +
-            'Se faltar apenas o polo EAD, siga o fluxo normal de escolha de polo após registrar_transferencia. ' +
-            'PROIBIDO: enviar_form_sumar_inscricao direto sem registrar_transferencia; perguntar "qual curso você tem interesse" quando origem e destino já constam.',
+          content: transferenciaCtx?.origem && transferenciaCtx?.destino && transferenciaCtx?.semestre
+            ? (
+              'TRANSFERÊNCIA/APROVEITAMENTO DE MATÉRIAS EM ANDAMENTO' +
+              ` — curso de origem: ${transferenciaCtx.origem}` +
+              ` — curso desejado na Sumaré: ${transferenciaCtx.destino}` +
+              ` — último semestre informado: ${transferenciaCtx.semestre}` +
+              '. O lead já informou ou confirmou os dados da transferência. ' +
+              'OBRIGATÓRIO: chame registrar_transferencia(telefone, curso_origem, semestre_concluido, curso_desejado) com os dados do histórico — NÃO pergunte novamente qual curso ele deseja. ' +
+              'Se faltar apenas o polo EAD, siga o fluxo normal de escolha de polo após registrar_transferencia. ' +
+              'PROIBIDO: enviar_form_sumar_inscricao direto sem registrar_transferencia; perguntar "qual curso você tem interesse" quando origem e destino já constam.'
+            )
+            : (
+              'O lead falou de transferência/aproveitamento, mas ainda faltam dados. ' +
+              'PROIBIDO chamar registrar_transferencia neste turno. ' +
+              'PROIBIDO inventar curso de origem, semestre (não use data de nascimento) ou polo. ' +
+              'Peça só o que falta: curso de origem na outra faculdade, último semestre concluído e curso desejado na Sumaré.'
+            ),
         }
       : null
 
@@ -1695,7 +1703,7 @@ export async function runAgent(env, input) {
           'TOOLS DE INSCRIÇÃO — você NUNCA pode dizer que "enviou", "vai enviar", "registrou polo" ou "fez a inscrição" sem ter chamado a tool correspondente neste turno. Tools disponíveis:\n' +
           '- enviar_form_sumar_inscricao(telefone, curso[, polo_id]): chame quando o lead confirma matrícula em um curso específico. Se o polo ainda não foi escolhido, o servidor pede polo automaticamente.\n' +
           '- registrar_polo_inscricao(telefone, polo_id): chame quando o lead responde polo (1-5 ou nome). polo_id ∈ {sao_miguel, barra_funda, tatuape, santana, pinheiros}.\n' +
-          '- registrar_transferencia(telefone, curso_origem, semestre_concluido, curso_desejado[, polo_id]): chame para ingresso por transferência/aproveitamento de matérias, depois de confirmar com o lead o curso de origem, o último semestre concluído e o curso desejado (regra 31).\n' +
+          '- registrar_transferencia(telefone, curso_origem, semestre_concluido, curso_desejado[, polo_id]): SOMENTE se o lead pediu transferência/aproveitamento de matérias com evidência no histórico. Nunca use data de nascimento como semestre. Nunca chame após o lead responder um número de lista de cursos. Ingresso normal (vestibular/pós) usa enviar_form_sumar_inscricao.\n' +
           '- confirmar_recebimento_formulario(telefone): chame quando o lead diz "pronto", "preenchi", "feito", "ok" após o estado aguardando_form_sumar.\n' +
           (suppressStaleFormHints
             ? 'ESTADO DE CURSO EM REVISÃO: NÃO use estágios antigos (form/link/polo) como verdade; peça confirmação do curso atual antes de tools de inscrição.\n'
