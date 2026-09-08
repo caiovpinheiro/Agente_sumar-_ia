@@ -17,6 +17,10 @@ import {
   messageRelatesToComprovanteEmConferencia,
   lastAssistantText,
 } from '../libShared/inscricaoFormHeuristics.js'
+import {
+  resolveFutureMatriculaPaymentDeferral,
+  buildFutureMatriculaPaymentDeferralReply,
+} from '../libShared/deferredPaymentEnrollmentHeuristics.js'
 import { messageIsInboundMediaPlaceholder } from '../libShared/scopeHeuristics.js'
 import { buildFacultyContactRedirectReply } from '../libShared/humanHandoffHeuristics.js'
 import { conversationMentionsTransferencia } from './inscricaoTransferenciaFlow.js'
@@ -199,6 +203,56 @@ export async function tryHandleMatriculaAceitePagamentoFlow(env, input) {
         steps: [{ type: 'contrato_link_clarify_resend', ok: Boolean(contractUrl) }],
         ctxSnapshot: { inscricaoForm: status, contractUrl: contractUrl || null },
       }),
+    }
+  }
+
+  // Pagamento só em data futura: não reenvia link agora (antes do resend).
+  // Comprovante / "já paguei" seguem o fluxo normal abaixo.
+  if (
+    !messageLooksLikePaymentProof(userMessage) &&
+    !messageIsInboundMediaPlaceholder(userMessage) &&
+    !userClaimsPaidWithoutProof(userMessage)
+  ) {
+    const deferral = resolveFutureMatriculaPaymentDeferral(userMessage, input.now)
+    if (deferral) {
+      const reply = buildFutureMatriculaPaymentDeferralReply({
+        pushName,
+        dateLabel: deferral.mentionedLabel,
+      })
+      if (idLead) {
+        await createLeadNote(
+          env,
+          idLead,
+          `Lead informou que só poderá pagar a matrícula em ${deferral.mentionedLabel}. ` +
+            `Link do portal não reenviado neste turno; orientar retorno na data.`,
+        ).catch(() => {})
+      }
+      console.log(
+        `[inscricaoAceite] telefone=${telefone} pagamento_adiado date=${deferral.mentionedLabel}`,
+      )
+      return {
+        handled: true,
+        result: buildAgentReturn({
+          executionId,
+          model,
+          t0,
+          reply,
+          steps: [
+            {
+              type: 'contrato_pagamento_adiado',
+              date_label: deferral.mentionedLabel,
+              y: deferral.y,
+              m: deferral.m,
+              d: deferral.d,
+            },
+          ],
+          ctxSnapshot: {
+            inscricaoForm: status,
+            pagamentoAdiado: true,
+            dateLabel: deferral.mentionedLabel,
+          },
+        }),
+      }
     }
   }
 

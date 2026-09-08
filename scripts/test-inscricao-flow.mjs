@@ -3035,6 +3035,171 @@ section('37 — Rute #24045: nome longo, número após lista de cursos, semestre
   assert(!/pagamento da matrícula/i.test(oficial), '37.12 reply não envia link de vestibular')
 }
 
+section('38 — Pagamento futuro da matrícula (pós-link) sem reenvio imediato')
+
+{
+  const {
+    messageAsksFutureMatriculaPaymentDeferral,
+    resolveFutureMatriculaPaymentDeferral,
+    buildFutureMatriculaPaymentDeferralReply,
+    messageAsksDeferredPaymentEnrollment,
+    getSaoPauloYmd,
+  } = await import('../libShared/deferredPaymentEnrollmentHeuristics.js')
+  const { messageAsksContratoLinkResend } = await import('../libShared/inscricaoFormHeuristics.js')
+
+  // 08/09/2026 ~12:00 America/Sao_Paulo = 15:00Z
+  const nowBefore = new Date('2026-09-08T15:00:00.000Z')
+  const nowOn18 = new Date('2026-09-18T15:00:00.000Z')
+  const nowAfter19 = new Date('2026-09-20T15:00:00.000Z')
+
+  const portalUrl =
+    'https://matricula.sumare.edu.br/Vestibular/MeioPagamento?candidato=abc&cpf=12345678901'
+  const aceiteRow = {
+    id: 88,
+    id_lead: 24045001,
+    inscricao_form_status: INSCRICAO_FORM_STATUS_AGUARDANDO_ACEITE,
+    captacao_contrato_link: portalUrl,
+  }
+
+  assert(
+    messageAsksFutureMatriculaPaymentDeferral('Receberei só dia 18', nowBefore),
+    '38.1 Receberei só dia 18 detecta deferral',
+  )
+  assert(
+    messageAsksFutureMatriculaPaymentDeferral('Mande o boleto pra dia 19', nowBefore),
+    '38.2 Mande o boleto pra dia 19 detecta deferral',
+  )
+  assert(
+    !messageAsksFutureMatriculaPaymentDeferral('manda o boleto', nowBefore),
+    '38.3 manda o boleto sem data NÃO é deferral',
+  )
+  assert(
+    !messageAsksFutureMatriculaPaymentDeferral('Receberei só dia 18', nowOn18),
+    '38.4 no próprio dia 18 NÃO deferre (não é futura)',
+  )
+  assert(
+    messageAsksContratoLinkResend('manda o boleto'),
+    '38.5 manda o boleto continua pedindo reenvio',
+  )
+  assert(
+    messageAsksAcademicAffairsSupportInText('segunda via do boleto'),
+    '38.6 segunda via de mensalidade/boleto segue Regra 32',
+  )
+  assert(
+    !messageAsksDeferredPaymentEnrollment('Receberei só dia 18'),
+    '38.7 frase pós-link NÃO cai no deferred pré-inscrição',
+  )
+
+  const resolved = resolveFutureMatriculaPaymentDeferral('Receberei só dia 18', nowBefore)
+  assertEqual(resolved?.mentionedLabel, 'dia 18', '38.8 label fiel = dia 18')
+  assertEqual(resolved?.d, 18, '38.8b dia=18')
+  assertEqual(resolved?.m, 9, '38.8c mês=9 (próxima ocorrência)')
+
+  const deferReply = buildFutureMatriculaPaymentDeferralReply({
+    pushName: 'Ana',
+    dateLabel: 'dia 18',
+  })
+  assert(/dia 18/i.test(deferReply), '38.9 reply menciona dia 18')
+  assert(/entrar em contato/i.test(deferReply), '38.9b orienta retorno')
+  assert(/link do portal/i.test(deferReply), '38.9c menciona link do portal')
+  assert(!/https?:\/\//i.test(deferReply), '38.9d reply canônica sem URL')
+  assert(!/linha digit[aá]vel|vencimento|PDF|agend/i.test(deferReply), '38.9e sem promessas indevidas')
+
+  async function runAceite(userMessage, now = nowBefore) {
+    installFetchStub(defaultSupabaseStub({ dadosClienteRow: aceiteRow }))
+    try {
+      return await tryHandleMatriculaAceitePagamentoFlow(env, {
+        telefone: '5511988887777',
+        userMessage,
+        executionId: 'EX-TEST-DEFER-PAY',
+        model: 'gpt-4.1-mini',
+        pushName: 'Ana',
+        t0: Date.now(),
+        historyMessages: [],
+        now,
+      })
+    } finally {
+      restoreFetch()
+    }
+  }
+
+  // 38.10 A — Receberei só dia 18 (antes do 18) → deferral, sem URL
+  {
+    const r = await runAceite('Receberei só dia 18', nowBefore)
+    assert(r?.handled === true, '38.10 handled deferral Receberei')
+    assertEqual(
+      r?.result?.orchestratorSteps?.[0]?.type,
+      'contrato_pagamento_adiado',
+      '38.10b step=contrato_pagamento_adiado',
+    )
+    assert(/dia 18/i.test(r?.result?.reply || ''), '38.10c reply dia 18')
+    assert(!/matricula\.sumare\.edu\.br/i.test(r?.result?.reply || ''), '38.10d sem URL portal')
+  }
+
+  // 38.11 B — Mande o boleto pra dia 19 → deferral, sem URL
+  {
+    const r = await runAceite('Mande o boleto pra dia 19', nowBefore)
+    assert(r?.handled === true, '38.11 handled deferral boleto dia 19')
+    assertEqual(
+      r?.result?.orchestratorSteps?.[0]?.type,
+      'contrato_pagamento_adiado',
+      '38.11b step=contrato_pagamento_adiado',
+    )
+    assert(/dia 19/i.test(r?.result?.reply || ''), '38.11c reply dia 19')
+    assert(!/matricula\.sumare\.edu\.br/i.test(r?.result?.reply || ''), '38.11d sem URL portal')
+  }
+
+  // 38.12 C — manda o boleto sem data → reenvio com URL
+  {
+    const r = await runAceite('manda o boleto', nowBefore)
+    assert(r?.handled === true, '38.12 handled resend normal')
+    assertEqual(
+      r?.result?.orchestratorSteps?.[0]?.type,
+      'contrato_link_resend',
+      '38.12b step=contrato_link_resend',
+    )
+    assert(
+      /matricula\.sumare\.edu\.br/i.test(r?.result?.reply || ''),
+      '38.12c reply contém URL do portal',
+    )
+    assert(/PIX|boleto|cart[aã]o/i.test(r?.result?.reply || ''), '38.12d menciona meios no portal')
+  }
+
+  // 38.13 D — após a data, manda o boleto → URL
+  {
+    assert(
+      !messageAsksFutureMatriculaPaymentDeferral('manda o boleto', nowAfter19),
+      '38.13 sem data futura após dia 19',
+    )
+    const r = await runAceite('manda o boleto', nowAfter19)
+    assert(r?.handled === true, '38.13b handled resend no retorno')
+    assert(/matricula\.sumare\.edu\.br/i.test(r?.result?.reply || ''), '38.13c URL no retorno')
+  }
+
+  // 38.14 F — comprovante / já paguei não viram deferral; claim pago segue fluxo existente
+  {
+    assert(
+      !messageAsksFutureMatriculaPaymentDeferral('segue o comprovante do pagamento dia 18', nowBefore),
+      '38.14 comprovante com dia NÃO deferre',
+    )
+    assert(
+      !messageAsksFutureMatriculaPaymentDeferral('já paguei dia 18', nowBefore),
+      '38.14b já paguei NÃO deferre',
+    )
+    const r = await runAceite('já paguei', nowBefore)
+    assert(r?.handled === true, '38.14c claim pago handled')
+    // "já paguei" é tratado como comprovante pelo fluxo existente (messageLooksLikePaymentProof)
+    assertEqual(
+      r?.result?.orchestratorSteps?.[0]?.type,
+      'comprovante_pagamento_recebido',
+      '38.14d step=comprovante_pagamento_recebido (inalterado)',
+    )
+  }
+
+  // Sanity: getSaoPauloYmd disponível e estável
+  assert(getSaoPauloYmd(nowBefore)?.d === 8, '38.15 Sao Paulo ymd do fixture = dia 8')
+}
+
 /* ────────────────────────────────────────────────────────────────────────── */
 /* Resumo                                                                     */
 /* ────────────────────────────────────────────────────────────────────────── */
