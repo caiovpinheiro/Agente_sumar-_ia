@@ -23,19 +23,19 @@ function isBlank(val) {
   return false
 }
 
-function snapshotNeedsCpf(snapshot) {
+export function snapshotNeedsCpf(snapshot) {
   const raw = snapshot?.cpf
   if (isBlank(raw)) return true
   return !normalizeCpf(raw) || normalizeCpf(raw).length !== 11
 }
 
-function snapshotNeedsEmail(snapshot) {
+export function snapshotNeedsEmail(snapshot) {
   const raw = String(snapshot?.email || '').trim()
   if (isBlank(raw)) return true
   return !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)
 }
 
-function snapshotNeedsDataNasc(snapshot) {
+export function snapshotNeedsDataNasc(snapshot) {
   return isBlank(snapshot?.data_nasc)
 }
 

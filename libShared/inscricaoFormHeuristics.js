@@ -18,6 +18,8 @@ import { messageLooksLikeEduitFlowFormReply } from './eduitFlowFormParse.js'
 export const INSCRICAO_FORM_STATUS_AGUARDANDO = 'aguardando_form_sumar'
 /** Formulário recebido — salesbot de distribuição em andamento. */
 export const INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO = 'aguardando_distribuicao_form'
+/** Formulário recebido, mas faltam campos de cadastro (e-mail/CPF/data nasc.) — agente pediu ao lead e a IA CONTINUA ativa. */
+export const INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO = 'aguardando_dados_cadastro'
 export const INSCRICAO_FORM_STATUS_CONCLUIDO = 'form_sumar_concluido'
 /** Antes do Form Sumar: aguardando o lead escolher o polo de inscrição. */
 export const INSCRICAO_FORM_STATUS_AGUARDANDO_POLO_PRE_FORM = 'aguardando_escolha_polo_pre_form'
@@ -75,7 +77,11 @@ export function matriculaPosFormAlreadyProcessed(row) {
   const status = String(row.inscricao_form_status || '').trim()
   if (MATRICULA_POS_FORM_IN_PROGRESS_STATUSES.has(status)) return true
   if (row.inscricao_form_recebido_at) {
-    const waiting = [INSCRICAO_FORM_STATUS_AGUARDANDO, INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO]
+    const waiting = [
+      INSCRICAO_FORM_STATUS_AGUARDANDO,
+      INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
+      INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
+    ]
     if (waiting.includes(status)) return false
     return true
   }
@@ -96,6 +102,7 @@ export function matriculaPosFormAlreadyProcessed(row) {
 const INSCRICAO_FORM_FILLED_STATUSES = new Set([
   INSCRICAO_FORM_STATUS_CONCLUIDO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
+  INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_POLO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_ACEITE,
   INSCRICAO_FORM_STATUS_COMPROVANTE_RECEBIDO,
@@ -277,6 +284,7 @@ export const MATRICULA_GATE_SKIP_RESUMO_STATUSES = new Set([
   INSCRICAO_FORM_STATUS_AGUARDANDO_POLO_PRE_FORM,
   INSCRICAO_FORM_STATUS_AGUARDANDO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
+  INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_POLO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_ACEITE,
   INSCRICAO_FORM_STATUS_CONCLUIDO,

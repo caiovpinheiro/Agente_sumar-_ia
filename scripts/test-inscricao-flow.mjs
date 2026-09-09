@@ -23,7 +23,7 @@
  */
 
 import { TOOL_DEFINITIONS, INSCRICAO_ACTION_TOOLS } from '../server/ai/toolDefinitions.js'
-import { validateReplyAgainstActions } from '../server/replyGuard.js'
+import { validateReplyAgainstActions, validateReplyBeforeSend } from '../server/replyGuard.js'
 import {
   runEnviarFormSumarInscricao,
   runRegistrarPoloInscricao,
@@ -32,6 +32,7 @@ import {
 import {
   tryProcessInscricaoPostFormPipeline,
   executeCaptacaoAfterFormResolved,
+  looksLikeCadastroAnswerForAguardandoDados,
 } from '../server/inscricaoPostFormPipeline.js'
 import {
   parseEduitFlowFormReply,
@@ -51,6 +52,7 @@ import {
   INSCRICAO_FORM_STATUS_AGUARDANDO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_ACEITE,
   INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
+  INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
   INSCRICAO_FORM_STATUS_CONCLUIDO,
   buildAskCursoAfterFormReply,
   buildCursoIndisponivelAlternativasReply,
@@ -125,6 +127,9 @@ import { buildHumanHandoffReply } from '../libShared/scopeHeuristics.js'
 import {
   messageAsksAcademicAffairsSupportInText,
   messageAsksInstitutionalAcademicPhone,
+  messageAsksPresencialClassDays,
+  messageAsksConsultantOnThisChannel,
+  messageConfirmsConsultantOffer,
   buildAcademicAffairsRedirectReply,
   buildInstitutionalAcademicPhoneReply,
   SUMARE_INSTITUTIONAL_PHONE,
@@ -2610,17 +2615,22 @@ section('33 — Curso informado não resolvido: alternativas (regressão Amanda 
     assert(!/nome do curso/i.test(reply), '33.8d NÃO pede nome do curso')
     assertEqual(
       capOut.ctxForm,
-      INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR,
-      '33.8e ctxForm=distribuir_consultor (falha terminal de campos)',
+      INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
+      '33.8e ctxForm=aguardando_dados_cadastro (IA ativa — caso Bianca #24067)',
     )
     assert(
       !(capOut.steps || []).some(
         (s) =>
+          s.type === 'ia_paused' ||
           s.type === 'aguardando_curso' ||
           s.type === 'curso_indisponivel_com_alternativas' ||
           s.type === 'curso_indisponivel_sem_alternativas',
       ),
-      '33.8f sem step de curso ausente/indisponível',
+      '33.8f sem ia_paused nem step de curso ausente/indisponível',
+    )
+    assert(
+      (capOut.steps || []).some((s) => s.type === 'aguardando_dados_cadastro'),
+      '33.8g step=aguardando_dados_cadastro',
     )
   } finally {
     restoreFetch()
@@ -3198,6 +3208,463 @@ section('38 — Pagamento futuro da matrícula (pós-link) sem reenvio imediato'
 
   // Sanity: getSaoPauloYmd disponível e estável
   assert(getSaoPauloYmd(nowBefore)?.d === 8, '38.15 Sao Paulo ymd do fixture = dia 8')
+}
+
+section('39 — Sem consultor: dias presenciais e links oficiais (Dafylyn #23914)')
+
+{
+  const { tryHandleAcademicAffairsInquiry } = await import('../server/academicAffairsFlow.js')
+
+  const dafylyn =
+    'Quais os dias que terei que comparecer presencialmente'
+  assert(
+    messageAsksPresencialClassDays(dafylyn),
+    '39.1 pergunta de dias presenciais detectada',
+  )
+  assert(
+    !messageAsksPresencialClassDays('Minhas aulas vão começar quando?'),
+    '39.2 início das aulas NÃO é calendário presencial',
+  )
+  assert(
+    !messageAsksAcademicAffairsSupportInText(dafylyn),
+    '39.3 dias presenciais NÃO vão para Portal do Aluno (ainda captação)',
+  )
+
+  const rDays = await tryHandleAcademicAffairsInquiry(
+    {},
+    {
+      userMessage: dafylyn,
+      historyMessages: [],
+      executionId: 'EX-TEST-DAFYLYN',
+      model: 'gpt-4.1-mini',
+      pushName: 'Dafylyn',
+      t0: Date.now(),
+    },
+  )
+  assert(rDays?.handled === true, '39.4 handled dias presenciais')
+  assertEqual(
+    rDays?.result?.orchestratorSteps?.[0]?.type,
+    'presencial_class_days_redirect',
+    '39.4b step=presencial_class_days_redirect',
+  )
+  assert(rDays?.result?.reply?.includes(SUMARE_ATENDIMENTO_URL), '39.4c atendimento')
+  assert(rDays?.result?.reply?.includes(SUMARE_OUVIDORIA_URL), '39.4d ouvidoria')
+  assert(!/verifique com um consultor|passar pra um consultor/i.test(rDays?.result?.reply || ''), '39.4e sem oferta de consultor')
+  assert(/Pinheiros|Alegrete/i.test(rDays?.result?.reply || ''), '39.4f menciona Central Pinheiros')
+
+  const offer =
+    'Quer que eu verifique com um consultor os detalhes exatos dos dias presenciais para você?'
+  const guard = validateReplyBeforeSend({
+    reply: offer,
+    userMessage: dafylyn,
+    toolCalls: [],
+  })
+  assert(guard.violation === true, '39.5 guard pega oferta de consultor')
+  assertEqual(guard.code, 'consultor_offer_or_promise', '39.5b code')
+  assert(guard.safeReply?.includes(SUMARE_ATENDIMENTO_URL), '39.5c safeReply tem atendimento')
+  assert(!/verifique com um consultor/i.test(guard.safeReply || ''), '39.5d safeReply sem oferta')
+
+  assert(messageAsksConsultantOnThisChannel('Consultor'), '39.6 Consultor isolado')
+  const histOffer = [{ role: 'assistant', content: offer }]
+  assert(
+    messageConfirmsConsultantOffer('Por gentileza', histOffer),
+    '39.7 Por gentileza após oferta',
+  )
+
+  const rConsultor = await tryHandleAcademicAffairsInquiry(
+    {},
+    {
+      userMessage: 'Consultor',
+      historyMessages: [{ role: 'user', content: dafylyn }, ...histOffer],
+      executionId: 'EX-TEST-DAFYLYN-2',
+      model: 'gpt-4.1-mini',
+      pushName: 'Dafylyn',
+      t0: Date.now(),
+    },
+  )
+  assert(rConsultor?.handled === true, '39.8 Consultor → links oficiais')
+  assert(
+    rConsultor?.result?.reply?.includes(SUMARE_ATENDIMENTO_URL),
+    '39.8b atendimento no pedido de consultor',
+  )
+  assert(
+    !/prefere mesmo/i.test(rConsultor?.result?.reply || ''),
+    '39.8c NÃO pergunta saída de canal',
+  )
+
+  const faculty = buildFacultyContactRedirectReply({ pushName: 'Dafylyn' })
+  assert(!/consultoria/i.test(faculty), '39.9 faculty redirect sem a palavra consultoria')
+}
+
+section('40 — MISSING_FIELDS: aguardando_dados_cadastro sem pausar IA (regressão Bianca #24067)')
+
+{
+  const { decideHoldOnIaPause } = await import('../server/dadosClienteStore.js')
+
+  assertEqual(
+    looksLikeCadastroAnswerForAguardandoDados('bibirmazv@gmail.com'),
+    true,
+    '40.1 e-mail isolado = dado de cadastro',
+  )
+  assertEqual(
+    looksLikeCadastroAnswerForAguardandoDados('obrigado'),
+    false,
+    '40.1b obrigado NÃO é dado de cadastro',
+  )
+  assertEqual(
+    looksLikeCadastroAnswerForAguardandoDados('ok'),
+    false,
+    '40.1c ok NÃO é dado de cadastro',
+  )
+
+  const holdCadastro = decideHoldOnIaPause({
+    atendimento_ia: 'pause',
+    inscricao_form_status: 'aguardando_dados_cadastro',
+    inscricao_form_recebido_at: '2026-09-08T22:31:00Z',
+  })
+  assertEqual(holdCadastro.hold, false, '40.2 hold=false em aguardando_dados_cadastro')
+  assertEqual(holdCadastro.reason, 'aguardando_dados_cadastro', '40.2b reason=aguardando_dados_cadastro')
+
+  // Captação MISSING_FIELDS (e-mail) → status aguardando_dados_cadastro, sem pause.
+  const envCaptacaoBianca = {
+    ...env,
+    SUMARE_CAPTACAO_ENABLED: 'true',
+    SUMARE_CAPTACAO_BASE_URL: 'https://mock-captacao.sumare.edu.br',
+    SUMARE_CAPTACAO_TOKEN: 'mock-captacao-token',
+  }
+  {
+    const { invalidateCaptacaoCursoCache } = await import('../server/sumareCaptacaoCursoStore.js')
+    invalidateCaptacaoCursoCache()
+    const base = defaultSupabaseStub({
+      dadosClienteRow: { id: 24067, id_lead: 24067 },
+    })
+    installFetchStub((call) => {
+      if (call.url.includes('/rest/v1/sumare_captacao_curso')) {
+        return {
+          status: 200,
+          body: [
+            {
+              codigo_original: 'BIOMED_EAD',
+              codigo_base: 'BIOMED',
+              curso_nome: 'Biomedicina',
+              modalidade: 'EAD',
+              ativo: true,
+            },
+          ],
+        }
+      }
+      if (String(call.url).includes('mock-captacao') || /captacao|candidato|contrato|gerar/i.test(call.url)) {
+        return { status: 500, body: { error: 'captacao nao deve ser chamada' } }
+      }
+      return base(call)
+    })
+    try {
+      const incompleteExpected = buildInscricaoFormFieldsIncompleteReply({
+        pushName: 'Bianca',
+        missingFields: ['email'],
+      })
+      const capOut = await executeCaptacaoAfterFormResolved(envCaptacaoBianca, {
+        telefone: '55119990024067',
+        idLead: 24067,
+        executionId: 'EX-BIANCA-MISSING-EMAIL',
+        pushName: 'Bianca',
+        snapshotOverride: {
+          curso_inscricao: 'Biomedicina',
+          nome: 'Bianca Teste',
+          // email ausente de propósito
+          cpf: '52998224725',
+          data_nasc: '01/01/1990',
+          sexo: 'F',
+          polo_inscricao: 'Santana',
+        },
+      })
+      assertEqual(
+        capOut.ctxForm,
+        INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
+        '40.3 ctxForm=aguardando_dados_cadastro',
+      )
+      assert(
+        !(capOut.steps || []).some((s) => s.type === 'ia_paused'),
+        '40.3b steps NÃO contêm ia_paused',
+      )
+      assert(
+        capOut.ctxForm !== INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR,
+        '40.3c status NÃO é distribuir_consultor',
+      )
+      assertEqual(capOut.reply, incompleteExpected, '40.3d reply=buildInscricaoFormFieldsIncompleteReply')
+      const statusPatches = fetchCalls.filter(
+        (c) =>
+          c.method === 'PATCH' &&
+          c.url.includes('dados_cliente_sum') &&
+          String(c.body || '').includes('inscricao_form_status'),
+      )
+      assert(
+        !statusPatches.some((c) => String(c.body || '').includes(INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR)),
+        '40.3e PATCH NÃO grava distribuir_consultor',
+      )
+    } finally {
+      restoreFetch()
+      invalidateCaptacaoCursoCache()
+    }
+  }
+
+  // Reentrada: com status aguardando_dados_cadastro, e-mail reprocessa; "obrigado" early-return.
+  const rowAguardandoDados = {
+    id: 24067,
+    id_lead: 24067,
+    inscricao_form_status: INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
+    inscricao_form_recebido_at: '2026-09-08T22:31:00Z',
+    polo_inscricao_escolhido: 'Santana',
+    captacao_unidade: 'ED_SP_P5',
+  }
+  const pipelineCtx40 = {
+    telefone: '55119990024067',
+    leadId: 24067,
+    pushName: 'Bianca',
+    executionId: 'EX-BIANCA-REENTRY',
+    model: 'gpt-4.1-mini',
+    t0: Date.now(),
+  }
+
+  installFetchStub(
+    defaultSupabaseStub({ dadosClienteRow: rowAguardandoDados, notes: [] }),
+  )
+  try {
+    const rEmail = await tryProcessInscricaoPostFormPipeline(env, {
+      ...pipelineCtx40,
+      userMessage: 'bibirmazv@gmail.com',
+    })
+    assert(rEmail !== null, '40.4 e-mail NÃO cai no early-return (pipeline reprocessa)')
+  } finally {
+    restoreFetch()
+  }
+
+  installFetchStub(
+    defaultSupabaseStub({ dadosClienteRow: rowAguardandoDados, notes: [] }),
+  )
+  try {
+    const rObrigado = await tryProcessInscricaoPostFormPipeline(env, {
+      ...pipelineCtx40,
+      userMessage: 'obrigado',
+    })
+    assertEqual(rObrigado, null, '40.5 obrigado cai no early-return (retorna null)')
+  } finally {
+    restoreFetch()
+  }
+}
+
+section('41 — Captação INFRA (SOFTSY_NOT_CONFIGURED): sem pausar / sem distribuir_consultor')
+
+{
+  const { invalidateCaptacaoCursoCache } = await import('../server/sumareCaptacaoCursoStore.js')
+
+  const envCaptacaoInfra = {
+    ...env,
+    SUMARE_CAPTACAO_ENABLED: 'true',
+    SUMARE_CAPTACAO_BASE_URL: 'https://mock-captacao.sumare.edu.br',
+    SUMARE_CAPTACAO_TOKEN: 'mock-captacao-token',
+    // Sem Softsy → SOFTSY_NOT_CONFIGURED no path educsy (padrão).
+  }
+
+  const snapshotCompleto = {
+    curso_inscricao: 'Biomedicina',
+    nome: 'Lead Softsy',
+    email: 'lead.softsy@example.com',
+    cpf: '52998224725',
+    data_nasc: '01/01/1990',
+    sexo: 'F',
+    polo_inscricao: 'Santana',
+  }
+
+  const statusAntes = INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO
+
+  function installInfraCaptacaoStub() {
+    invalidateCaptacaoCursoCache()
+    const base = defaultSupabaseStub({
+      dadosClienteRow: {
+        id: 90909,
+        id_lead: 90909,
+        inscricao_form_status: statusAntes,
+      },
+    })
+    installFetchStub((call) => {
+      if (call.url.includes('/rest/v1/sumare_captacao_curso')) {
+        return {
+          status: 200,
+          body: [
+            {
+              codigo_original: 'BIOMED_EAD',
+              codigo_base: 'BIOMED',
+              curso_nome: 'Biomedicina',
+              modalidade: 'EAD',
+              ativo: true,
+            },
+          ],
+        }
+      }
+      if (String(call.url).includes('mock-captacao') || /captacao|candidato|contrato|gerar/i.test(call.url)) {
+        return { status: 500, body: { error: 'captacao nao deve ser chamada no path softsy-missing' } }
+      }
+      return base(call)
+    })
+  }
+
+  function assertNoTerminalStatusPatches(label) {
+    const statusPatches = fetchCalls.filter(
+      (c) =>
+        c.method === 'PATCH' &&
+        c.url.includes('dados_cliente_sum') &&
+        String(c.body || '').includes('inscricao_form_status'),
+    )
+    assert(
+      !statusPatches.some((c) => String(c.body || '').includes(INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR)),
+      `${label} PATCH NÃO grava distribuir_consultor`,
+    )
+    assert(
+      !statusPatches.some((c) => String(c.body || '').includes(INSCRICAO_FORM_STATUS_CONCLUIDO)),
+      `${label} PATCH NÃO grava form_sumar_concluido`,
+    )
+  }
+
+  // 41.1 SOFTSY_NOT_CONFIGURED sem turno do lead → infra fail, status preservado
+  installInfraCaptacaoStub()
+  try {
+    const capOut = await executeCaptacaoAfterFormResolved(envCaptacaoInfra, {
+      telefone: '55119990090909',
+      idLead: 90909,
+      executionId: 'EX-INFRA-SOFTSY',
+      pushName: 'Lead Softsy',
+      snapshotOverride: snapshotCompleto,
+      schedulerTick: true,
+    })
+    assert(
+      (capOut.steps || []).some((s) => s.type === 'captacao_infra_fail'),
+      '41.1 step captacao_infra_fail presente',
+    )
+    assert(
+      !(capOut.steps || []).some((s) => s.type === 'ia_paused'),
+      '41.1b steps NÃO contêm ia_paused',
+    )
+    assert(
+      capOut.ctxForm !== INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR &&
+        capOut.ctxForm !== INSCRICAO_FORM_STATUS_CONCLUIDO,
+      '41.1c ctxForm NÃO virou terminal',
+    )
+    assert(
+      !capOut.reply || !String(capOut.reply).trim(),
+      '41.1d reply vazio/null em schedulerTick (sem turno do lead)',
+    )
+    assertNoTerminalStatusPatches('41.1e')
+    assertEqual(
+      (capOut.steps || []).find((s) => s.type === 'sumare_captacao')?.code,
+      'SOFTSY_NOT_CONFIGURED',
+      '41.1f code=SOFTSY_NOT_CONFIGURED',
+    )
+  } finally {
+    restoreFetch()
+    invalidateCaptacaoCursoCache()
+  }
+
+  // 41.2 Mesmo cenário com turno do lead → reply "processando / em instantes"
+  installInfraCaptacaoStub()
+  try {
+    const capOut = await executeCaptacaoAfterFormResolved(envCaptacaoInfra, {
+      telefone: '55119990090910',
+      idLead: 90910,
+      executionId: 'EX-INFRA-SOFTSY-TURN',
+      pushName: 'Lead Softsy',
+      userMessage: 'oi, ainda estou aguardando o link',
+      snapshotOverride: snapshotCompleto,
+    })
+    assert(
+      (capOut.steps || []).some((s) => s.type === 'captacao_infra_fail'),
+      '41.2 step captacao_infra_fail presente',
+    )
+    assert(
+      !(capOut.steps || []).some((s) => s.type === 'ia_paused'),
+      '41.2b steps NÃO contêm ia_paused',
+    )
+    assert(
+      /processando/i.test(String(capOut.reply || '')) && /em instantes/i.test(String(capOut.reply || '')),
+      '41.2c reply = mensagem processando / em instantes',
+    )
+    assertNoTerminalStatusPatches('41.2d')
+  } finally {
+    restoreFetch()
+    invalidateCaptacaoCursoCache()
+  }
+
+  // 41.3 Contraprova: GERAR_FAILED continua terminal (pausa + distribuir_consultor)
+  {
+    invalidateCaptacaoCursoCache()
+    const envLegacy = {
+      ...envCaptacaoInfra,
+      SUMARE_INSCRICAO_PATH: 'legacy',
+    }
+    const base = defaultSupabaseStub({
+      dadosClienteRow: { id: 90911, id_lead: 90911, inscricao_form_status: statusAntes },
+    })
+    installFetchStub((call) => {
+      if (call.url.includes('/rest/v1/sumare_captacao_curso')) {
+        return {
+          status: 200,
+          body: [
+            {
+              codigo_original: 'BIOMED_EAD',
+              codigo_base: 'BIOMED',
+              curso_nome: 'Biomedicina',
+              modalidade: 'EAD',
+              ativo: true,
+            },
+          ],
+        }
+      }
+      if (String(call.url).includes('mock-captacao') || /captacao|candidato|contrato|gerar/i.test(call.url)) {
+        return { status: 500, body: { error: 'gerar mock fail' } }
+      }
+      return base(call)
+    })
+    try {
+      const capOut = await executeCaptacaoAfterFormResolved(envLegacy, {
+        telefone: '55119990090911',
+        idLead: 90911,
+        executionId: 'EX-INFRA-GERAR-FAILED',
+        pushName: 'Lead Gerar',
+        snapshotOverride: snapshotCompleto,
+      })
+      assertEqual(
+        (capOut.steps || []).find((s) => s.type === 'sumare_captacao')?.code,
+        'GERAR_FAILED',
+        '41.3 code=GERAR_FAILED',
+      )
+      assert(
+        (capOut.steps || []).some((s) => s.type === 'ia_paused'),
+        '41.3b steps CONTÊM ia_paused (terminal)',
+      )
+      assertEqual(
+        capOut.ctxForm,
+        INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR,
+        '41.3c ctxForm=distribuir_consultor',
+      )
+      const statusPatches = fetchCalls.filter(
+        (c) =>
+          c.method === 'PATCH' &&
+          c.url.includes('dados_cliente_sum') &&
+          String(c.body || '').includes('inscricao_form_status'),
+      )
+      assert(
+        statusPatches.some((c) => String(c.body || '').includes(INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR)),
+        '41.3d PATCH grava distribuir_consultor',
+      )
+      assert(
+        !(capOut.steps || []).some((s) => s.type === 'captacao_infra_fail'),
+        '41.3e NÃO marca captacao_infra_fail',
+      )
+    } finally {
+      restoreFetch()
+      invalidateCaptacaoCursoCache()
+    }
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

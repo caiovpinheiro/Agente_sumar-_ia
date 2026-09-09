@@ -6,6 +6,7 @@
 import {
   INSCRICAO_FORM_STATUS_AGUARDANDO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
+  INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
   INSCRICAO_FORM_STATUS_CONCLUIDO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_ACEITE,
   INSCRICAO_FORM_STATUS_AGUARDANDO_CONFIRM_NOVA_INSCRICAO,
@@ -42,6 +43,7 @@ import {
   SUMARE_POLOS_EAD,
 } from '../libShared/sumarePoloCatalog.js'
 import { extractCursoAreaFromText, messageIsBareCourseSelection } from '../libShared/cursoConfirmation.js'
+import { extractCadastroFieldsFromInbound } from '../libShared/cadastroInboundExtract.js'
 import { normalizeMessageForScope } from '../libShared/scopeHeuristics.js'
 import { runKommoSalesbot } from './kommoSalesbot.js'
 import { listLeadNotes, listLeadEvents, createLeadAuditNote } from './kommoClient.js'
@@ -74,8 +76,27 @@ import {
 const FORM_STATUS_FIELD = 'inscricao_form_status'
 const MATRICULA_BOT_ID_DEFAULT = 49813
 
+// Falha de configuração/rede NOSSA: não é dado errado do lead, então não
+// pausa a IA nem marca distribuir_consultor — um retry resolve.
+// (SOFTSY_NOT_CONFIGURED travou um lead em 2026-09-09 como se fosse falha do aluno.)
+const CAPTACAO_INFRA_FAIL_CODES = new Set([
+  'CAPTACAO_NOT_CONFIGURED',
+  'SOFTSY_NOT_CONFIGURED',
+  'CAPTACAO_FETCH_FAILED',
+])
+
 /** Claim em memória quando não há linha em dados_cliente_sum (form enviado só via Kommo). */
 const matriculaClaimMem = new Map()
+
+/** Mensagem de “ainda processando” (claim deferred / falha infra com turno do lead). */
+function buildInscricaoFormProcessingDeferredReply({ pushName } = {}) {
+  const pushFirst = pushName ? String(pushName).split(/\s+/)[0] : ''
+  const nameBit = pushFirst ? `, ${pushFirst}` : ''
+  return (
+    `Obrigado${nameBit}! Recebemos seu formulário e já estamos processando sua inscrição no sistema. ` +
+    `Em instantes você recebe aqui o link para aceitar o contrato e concluir o pagamento.`
+  )
+}
 
 function matriculaClaimMemKey(telefone) {
   return normalizeTelefone(telefone)
@@ -111,7 +132,11 @@ async function ensureClienteRowForMatricula(env, telefone, leadId) {
   return null
 }
 
-async function claimMatriculaPosFormExclusive(env, telefone, { leadId, userMessage } = {}) {
+async function claimMatriculaPosFormExclusive(
+  env,
+  telefone,
+  { leadId, userMessage, allowCadastroRetry = false } = {},
+) {
   const { url, key, table } = getSupabaseCfg(env)
   const memKey = matriculaClaimMemKey(telefone)
   try {
@@ -133,6 +158,14 @@ async function claimMatriculaPosFormExclusive(env, telefone, { leadId, userMessa
       !looksLikeCursoAnswerForAguardandoDistribuicao(userMessage)
     ) {
       return { claimed: false, reason: 'awaiting_curso_from_lead', status: existingStatus }
+    }
+    // Caso Bianca #24067: aguardando_dados_cadastro só libera com dado de cadastro.
+    if (
+      existingStatus === INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO &&
+      !allowCadastroRetry &&
+      !looksLikeCadastroAnswerForAguardandoDados(userMessage, { phoneDigits: telefone })
+    ) {
+      return { claimed: false, reason: 'awaiting_cadastro_from_lead', status: existingStatus }
     }
 
     let rowId = existing?.id != null ? Number(existing.id) : NaN
@@ -157,6 +190,7 @@ async function claimMatriculaPosFormExclusive(env, telefone, { leadId, userMessa
     const waiting = [
       INSCRICAO_FORM_STATUS_AGUARDANDO,
       INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
+      INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO,
     ].join(',')
 
     const res = await fetch(
@@ -251,8 +285,11 @@ function buildAgentReturn({ executionId, model, t0, reply, steps, toolCalls, ctx
   }
 }
 
-function shouldTriggerMatriculaPosForm(userMessage, status) {
+function shouldTriggerMatriculaPosForm(userMessage, status, { phoneDigits = '' } = {}) {
   if (messageSignalsFormSubmissionAck(userMessage)) return true
+  if (status === INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO) {
+    return looksLikeCadastroAnswerForAguardandoDados(userMessage, { phoneDigits })
+  }
   if (
     status === INSCRICAO_FORM_STATUS_AGUARDANDO ||
     status === INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO
@@ -282,6 +319,24 @@ function looksLikeCursoAnswerForAguardandoDistribuicao(userMessage) {
   if (t.length < 3) return false
   if (/^\s*(obrigad[oa]s?|ok(ay)?|sim|n[aã]o|pronto|feito|done|blz|beleza)\s*[.!?]*\s*$/i.test(t)) return false
   return true
+}
+
+/**
+ * Lead respondeu dado de cadastro (e-mail/CPF/data nasc.) enquanto o status é
+ * aguardando_dados_cadastro — ou refez o Flow. Caso Bianca #24067.
+ */
+export function looksLikeCadastroAnswerForAguardandoDados(userMessage, { phoneDigits = '' } = {}) {
+  const raw = String(userMessage || '').trim()
+  if (!raw) return false
+  if (
+    messageIsFlowResponsesReceived(raw) ||
+    messageIsFormularioSumarPreenchidoMarker(raw) ||
+    messageLooksLikeEduitFlowFormReply(raw)
+  ) {
+    return true
+  }
+  const extracted = extractCadastroFieldsFromInbound(raw, [], { phoneDigits })
+  return Boolean(extracted.cpf || extracted.email || extracted.dataNasc)
 }
 
 function eventCreatedMs(ev) {
@@ -645,12 +700,13 @@ export async function executeCaptacaoAfterFormResolved(env, ctx) {
         })
         auditNoted = true
       } else if (cap.code === 'MISSING_FIELDS') {
-        // Faltam campos além do curso (ex.: CPF, data de nascimento) — pede
-        // os dados diretamente, sem prometer consultor nem usar o redirect
-        // da faculdade (que é reservado para falhas realmente terminais).
+        // Faltam campos além do curso (ex.: CPF, e-mail, data de nascimento) —
+        // pede os dados diretamente e mantém a IA ativa (caso Bianca #24067).
         reply = buildInscricaoFormFieldsIncompleteReply({ pushName, missingFields: missingArr })
-        captacaoFailedTerminal = true
-        captacaoFailReason = `${cap.code || 'sem_code'}:${missing || cap.error || 'sem_detalhe'}`
+        captacaoFailedTerminal = false
+        captacaoFailReason = `campos_cadastro_ausentes:${missing || 'sem_detalhe'}`
+        await setFormStatus(env, telefone, INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO).catch(() => {})
+        ctxForm = INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO
         await noteAtendimentoNaoConcluido(env, {
           leadId: idLead,
           executionId,
@@ -658,6 +714,27 @@ export async function executeCaptacaoAfterFormResolved(env, ctx) {
           reason: 'campos obrigatórios ausentes — pedindo dados ao lead',
           detail: missing || cap.error,
           replyKind: 'pedir_campos',
+        })
+        auditNoted = true
+      } else if (CAPTACAO_INFRA_FAIL_CODES.has(cap.code)) {
+        // Config/rede nossa (ex.: SOFTSY_NOT_CONFIGURED em 2026-09-09): não pausar
+        // nem distribuir_consultor — retry resolve; status do lead fica intacto.
+        captacaoFailedTerminal = false
+        captacaoFailReason = `infra:${cap.code}`
+        // `completed` é só o default em memória — reportá-lo aqui diria que a
+        // inscrição concluiu numa falha de infra.
+        ctxForm = null
+        const hasLeadTurn = Boolean(String(ctx.userMessage || '').trim())
+        reply = hasLeadTurn ? buildInscricaoFormProcessingDeferredReply({ pushName }) : null
+        console.error(
+          `[inscricaoPostForm] captação INFRA lead=${idLead} code=${cap.code} err=${String(cap.error || '').slice(0, 800)} — sem pausar (retry)`,
+        )
+        await noteAtendimentoNaoConcluido(env, {
+          leadId: idLead,
+          executionId,
+          code: cap.code,
+          reason: 'falha de configuração/rede na captação — sem pausar o lead',
+          replyKind: 'infra_retry',
         })
         auditNoted = true
       } else {
@@ -714,7 +791,8 @@ export async function executeCaptacaoAfterFormResolved(env, ctx) {
         ctxForm = 'completed'
       } else if (
         ctxForm !== INSCRICAO_FORM_STATUS_AGUARDANDO_ACEITE &&
-        ctxForm !== INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO
+        ctxForm !== INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO &&
+        ctxForm !== INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO
       ) {
         ctxForm = INSCRICAO_FORM_STATUS_AGUARDANDO_ACEITE
       }
@@ -742,6 +820,13 @@ export async function executeCaptacaoAfterFormResolved(env, ctx) {
     // Curso pendente (ausente) OU curso informado indisponível (com/sem alternativas).
     // Mantém a IA ativa e o status aguardando_distribuicao — NÃO executa captação/contrato.
     steps.unshift({ type: aguardandoDistribuicaoStep, ok: true, reason: captacaoFailReason })
+  } else if (ctxForm === INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO) {
+    // Campos de cadastro pendentes (e-mail/CPF/data nasc.): IA segue ativa para
+    // receber o dado do lead e o card sync gravar no EduIT. NÃO pausa (caso Bianca #24067).
+    steps.unshift({ type: 'aguardando_dados_cadastro', ok: true, reason: captacaoFailReason })
+  } else if (String(captacaoFailReason || '').startsWith('infra:') && !matriculaOk) {
+    // Infra/config nossa: não pausa IA, não grava status — só registra o step.
+    steps.unshift({ type: 'captacao_infra_fail', ok: false, reason: captacaoFailReason })
   } else if (captacaoFailedTerminal && !matriculaOk) {
     // Plano_Inscricao_CardKommo — captação falhou definitivamente e o salesbot
     // fallback também não rodou. Estado terminal evita o loop do scheduler
@@ -787,9 +872,23 @@ export async function executeCaptacaoAfterFormResolved(env, ctx) {
  * Form preenchido → pergunta polo (se necessário) → API Captação → salesbot 49813 fallback.
  */
 async function stepMatriculaPosForm(env, ctx) {
-  const { telefone, idLead, executionId, model, pushName, t0, kommoFormDetected, userMessage } = ctx
+  const {
+    telefone,
+    idLead,
+    executionId,
+    model,
+    pushName,
+    t0,
+    kommoFormDetected,
+    userMessage,
+    allowRetryAfterCadastroData,
+  } = ctx
 
-  if (idLead != null && (await leadHasPostFormRegistradoNoteSinceLastFormSend(env, idLead))) {
+  if (
+    idLead != null &&
+    !allowRetryAfterCadastroData &&
+    (await leadHasPostFormRegistradoNoteSinceLastFormSend(env, idLead))
+  ) {
     console.log(`[inscricaoPostForm] lead=${idLead} skip matricula_pos_form (nota pós-form após último Formulario_Sum)`)
     return { handled: false, reason: 'kommo_post_form_note_exists' }
   }
@@ -818,23 +917,23 @@ async function stepMatriculaPosForm(env, ctx) {
     }
   }
 
-  const claim = await claimMatriculaPosFormExclusive(env, telefone, { leadId: idLead, userMessage })
+  const claim = await claimMatriculaPosFormExclusive(env, telefone, {
+    leadId: idLead,
+    userMessage,
+    allowCadastroRetry: Boolean(allowRetryAfterCadastroData),
+  })
   if (!claim.claimed) {
     console.log(
       `[inscricaoPostForm] lead=${idLead} matricula_pos_form skip claim=${claim.reason} status=${claim.status || 'n/a'}`,
     )
     if (kommoFormDetected) {
-      const pushFirst = pushName ? String(pushName).split(/\s+/)[0] : ''
-      const nameBit = pushFirst ? `, ${pushFirst}` : ''
       return {
         handled: true,
         result: buildAgentReturn({
           executionId,
           model,
           t0,
-          reply:
-            `Obrigado${nameBit}! Recebemos seu formulário e já estamos processando sua inscrição no sistema. ` +
-            `Em instantes você recebe aqui o link para aceitar o contrato e concluir o pagamento.`,
+          reply: buildInscricaoFormProcessingDeferredReply({ pushName }),
           steps: [{ type: 'matricula_claim_deferred', ok: false, reason: claim.reason }],
           ctxSnapshot: {
             inscricaoForm: claim.status || INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
@@ -853,6 +952,7 @@ async function stepMatriculaPosForm(env, ctx) {
     model,
     pushName,
     t0,
+    userMessage,
     snapshotOverride: poloPrep?.snapshotOverride,
   })
 
@@ -899,6 +999,9 @@ async function stepMatriculaPosForm(env, ctx) {
  */
 export async function tryProcessInscricaoPostFormPipeline(env, input) {
   const { telefone, userMessage, executionId, model, leadId: leadIdHint, pushName, t0, schedulerTick } = input
+  // Retomada operacional (script de resgate): o dado de cadastro chegou em um
+  // turno passado, então não há `userMessage` para o guard reconhecer.
+  const forceCadastroRetry = Boolean(input?.forceCadastroRetry)
   if (!telefone) return null
 
   const row = await getClienteRow(env, telefone)
@@ -933,11 +1036,30 @@ export async function tryProcessInscricaoPostFormPipeline(env, input) {
     return null
   }
 
+  // Caso Bianca #24067: aguardando e-mail/CPF/data nasc. — só reprocessa com
+  // dado de cadastro (ou Flow refeito).
+  if (
+    status === INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO &&
+    !forceCadastroRetry &&
+    !looksLikeCadastroAnswerForAguardandoDados(userMessage, { phoneDigits: telefone })
+  ) {
+    console.log(
+      `[inscricaoPostForm] skip reprocess aguardando_dados_cadastro telefone=${telefone} scheduler=${Boolean(schedulerTick)}`,
+    )
+    return null
+  }
+
   const idLead = await resolveLeadId(env, telefone, leadIdHint)
+
+  const allowRetryAfterCadastroData =
+    status === INSCRICAO_FORM_STATUS_AGUARDANDO_DADOS_CADASTRO &&
+    (forceCadastroRetry ||
+      looksLikeCadastroAnswerForAguardandoDados(userMessage, { phoneDigits: telefone }))
 
   if (
     idLead != null &&
     !messageSignalsFormSubmissionAck(userMessage) &&
+    !allowRetryAfterCadastroData &&
     (await leadHasPostFormRegistradoNoteSinceLastFormSend(env, idLead))
   ) {
     console.log(`[inscricaoPostForm] lead=${idLead} skip pipeline (nota pós-form após último Formulario_Sum)`)
@@ -989,7 +1111,10 @@ export async function tryProcessInscricaoPostFormPipeline(env, input) {
   // Atalho `schedulerTick && status === AGUARDANDO_DISTRIBUICAO` removido: o
   // early-return acima já bloqueia esse status sem resposta de curso do lead,
   // então manter o atalho aqui só reabriria o loop via schedulerTick.
-  const trigger = shouldTriggerMatriculaPosForm(userMessage, status) || kommoFormDone
+  const trigger =
+    shouldTriggerMatriculaPosForm(userMessage, status, { phoneDigits: telefone }) ||
+    kommoFormDone ||
+    allowRetryAfterCadastroData
 
   if (!trigger) return null
 
@@ -1082,6 +1207,7 @@ export async function tryProcessInscricaoPostFormPipeline(env, input) {
     t0,
     kommoFormDetected: kommoFormDone,
     userMessage,
+    allowRetryAfterCadastroData,
   })
 }
 
@@ -1099,7 +1225,10 @@ export function isInscricaoPostFormSchedulerEnabled(env = process.env) {
  * Scheduler: detecta formulário preenchido no Kommo (campos/eventos) mesmo sem
  * "Flow responses received" no buffer — roda após cada sync do poll.
  */
-export async function tryAdvanceInscricaoPostFormScheduler(env, { telefone, leadId }) {
+export async function tryAdvanceInscricaoPostFormScheduler(
+  env,
+  { telefone, leadId, forceCadastroRetry = false },
+) {
   return tryProcessInscricaoPostFormPipeline(env, {
     telefone,
     leadId,
@@ -1108,5 +1237,6 @@ export async function tryAdvanceInscricaoPostFormScheduler(env, { telefone, lead
     model: 'scheduler',
     t0: Date.now(),
     schedulerTick: true,
+    forceCadastroRetry,
   })
 }

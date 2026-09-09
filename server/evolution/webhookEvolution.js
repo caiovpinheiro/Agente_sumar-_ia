@@ -142,6 +142,7 @@ import { transcribeAudioBase64, analyzeImageBase64 } from './openaiMedia.js'
 import { fetchEvolutionMediaBase64, resolveInstanceName, describeMediaPayloadShape } from './evolutionMedia.js'
 import { normalizeEvolutionInstance } from './instanceConfig.js'
 import { runAgent } from '../ai/agentRunner.js'
+import { persistCadastroFieldsFromInbound } from '../cadastroCardSync.js'
 import { saveConversation } from '../historyStore.js'
 import {
   getLeadIdByTelefone,
@@ -711,6 +712,32 @@ async function flushSessionInner(env, sessionId, opts = {}) {
       const pauseDecision = await shouldHoldOnIaPause(env, telefone)
       if (pauseDecision.hold) {
         const pending = await peekPending()
+        // Rede de segurança: dado de cadastro objetivo não pode se perder só
+        // porque a IA está pausada (caso Bianca #24067).
+        try {
+          const msgs = await getMessages(env, sessionId)
+          const userMessage = Array.isArray(msgs)
+            ? msgs.map((m) => String(m || '').trim()).filter(Boolean).join(', ')
+            : ''
+          if (userMessage) {
+            const leadHint = normalizeCrmLeadId(opts.leadIdHint, env) || undefined
+            const cadastro = await persistCadastroFieldsFromInbound(env, {
+              telefone,
+              leadId: leadHint,
+              userMessage,
+              historyMessages: [],
+            })
+            if (cadastro.written?.length) {
+              console.log(
+                `[Evolution][flush] ${sessionId} CADASTRO_CARD_SYNC_ON_HOLD written=${cadastro.written.join(',')} ok=${cadastro.ok} code=${cadastro.code || 'n/a'}`,
+              )
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[Evolution][flush] ${sessionId} CADASTRO_CARD_SYNC_ON_HOLD erro: ${err?.message || err}`,
+          )
+        }
         console.log(
           `[Evolution][flush] ${sessionId} held — ia_paused (matrícula/consultor ativo) | pending: ${pending}`,
         )

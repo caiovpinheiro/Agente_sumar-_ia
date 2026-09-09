@@ -690,6 +690,22 @@ export async function runAgent(env, input) {
     )
     const pauseDecision = decideHoldOnIaPause(pauseRow)
     if (pauseDecision.hold) {
+      // Rede de segurança: gravar cadastro mesmo com IA pausada (caso Bianca #24067).
+      try {
+        const cadastro = await persistCadastroFieldsFromInbound(env, {
+          telefone,
+          leadId,
+          userMessage,
+          historyMessages: [],
+        })
+        if (cadastro.written?.length) {
+          console.log(
+            `[${executionId}] CADASTRO_CARD_SYNC_ON_HOLD written=${cadastro.written.join(',')} ok=${cadastro.ok} code=${cadastro.code || 'n/a'}`,
+          )
+        }
+      } catch (err) {
+        console.warn(`[${executionId}] CADASTRO_CARD_SYNC_ON_HOLD erro: ${err?.message || err}`)
+      }
       console.log(`[${executionId}] IA pausada (atendimento_ia=pause) telefone=${telefone}`)
       return {
         ok: true,

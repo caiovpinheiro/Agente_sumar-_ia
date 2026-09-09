@@ -112,6 +112,33 @@ function messageAsksAcademicPoloChange(t) {
   return false
 }
 
+/**
+ * Problema de acesso ao AVA / plataforma do aluno (pós-matrícula).
+ * Não cobre formulário de inscrição do WhatsApp.
+ * `t` já vem normalizado (sem acentos).
+ */
+function messageAsksStudentPlatformAccessIssue(t) {
+  if (!t || t.length < 8) return false
+  // Formulário comercial do WhatsApp — não é AVA/portal do aluno.
+  if (/\bformul\w*\b/i.test(t) && !/\b(ava|ambiente\s+virtual|portal\s+do\s+aluno)\b/i.test(t)) {
+    return false
+  }
+  const platform =
+    /\b(ava|ambiente\s+virtual|portal\s+do\s+aluno|moodle)\b/i.test(t) ||
+    (/\bplataforma\b/i.test(t) &&
+      /\b(entrar|acessar|travad|login|senha|email|curso|aluno|ead)\b/i.test(t))
+  if (!platform) return false
+  if (
+    /\btravad|\bnao\s+consigo\s+(entrar|digitar|acessar|sair)\b|\bnao\s+abre\b|\bcampo\s+de\s+email\b|\bacessar\s+o\s+curso\b|\bmodificar\s+perfil\b|\bpreferencias\b|\bprimeiro\s+acesso\b|\blogin\b|\bsenha\b/i.test(
+      t,
+    )
+  ) {
+    return true
+  }
+  if (/\b(problema|erro|acesso)\b/i.test(t)) return true
+  return false
+}
+
 /** Padrões de assunto acadêmico na mensagem isolada. */
 export function messageAsksAcademicAffairsSupportInText(text) {
   const t = normalize(text)
@@ -143,7 +170,88 @@ export function messageAsksAcademicAffairsSupportInText(text) {
   if (/\bsolicita[cç][aã]o\s+de\s+diploma\b/i.test(t)) return true
   if (messageAsksFinanceiroInstitucional(t)) return true
   if (messageAsksAcademicPoloChange(t)) return true
+  if (messageAsksStudentPlatformAccessIssue(t)) return true
 
+  return false
+}
+
+/**
+ * Dias/horários de aulas presenciais do Semipresencial.
+ * Não cobre "quando começam as aulas" (início do curso — comercial).
+ * Não entra no redirect de Portal do Aluno: candidato em captação ainda não é aluno.
+ */
+export function messageAsksPresencialClassDays(text) {
+  const t = normalize(text)
+  if (!t || t.length < 8) return false
+  if (looksLikeCommercialEnrollment(t) && !/\b(presencialmente|presenciais|presencial)\b/i.test(t)) {
+    return false
+  }
+  const asksStart =
+    /\bquando\s+(comec|inici)/i.test(t) ||
+    /\baulas?\s+v[aã]o\s+comecar\b/i.test(t) ||
+    /\bcomeco\s+das\s+aulas\b/i.test(t)
+  const asksWhichDays =
+    /\b(quais?\s+(os\s+)?dias?|que\s+dias?|dias?\s+da\s+semana|calendario|horarios?)\b/i.test(t) ||
+    /\bcomparecer\b/i.test(t)
+  if (asksStart && !asksWhichDays) return false
+
+  const presencial = /\b(presencialmente|presenciais|presencial)\b/i.test(t)
+  if (!presencial) return false
+  if (/\bcomparecer\b/i.test(t)) return true
+  if (asksWhichDays) return true
+  if (/\b(encontros?|aulas?)\b/i.test(t) && /\b(dias?|semana|calendario|horario)\b/i.test(t)) {
+    return true
+  }
+  return false
+}
+
+/** Links oficiais quando a grade de dias presenciais não está neste canal. */
+export function buildPresencialClassDaysRedirectReply(opts = {}) {
+  const name = firstName(opts.pushName)
+  const ola = name ? `Olá, ${name}!` : 'Olá!'
+  return (
+    `${ola} Os encontros presenciais do Semipresencial acontecem na Central da Faculdade Sumaré ` +
+    `em Pinheiros (Rua Alegrete, 89, Sumaré, São Paulo/SP). ` +
+    `Os dias e horários exatos seguem o calendário acadêmico da instituição e não tenho essa grade detalhada por aqui.\n\n` +
+    `Para confirmar os dias presenciais, fale direto com a Faculdade Sumaré pelos canais oficiais:\n\n` +
+    `*Atendimento Sumaré:* ${SUMARE_ATENDIMENTO_URL}\n\n` +
+    `*Ouvidoria Sumaré:* ${SUMARE_OUVIDORIA_URL}\n\n` +
+    `Não há consultor neste canal — o atendimento humano é só por esses links.`
+  )
+}
+
+function assistantOfferedConsultant(text) {
+  const t = normalize(text)
+  if (!t) return false
+  if (/\bconsultor\b/i.test(t) && /\b(verifique|verificar|passar|passo|encaminh|quer que)\b/i.test(t)) {
+    return true
+  }
+  return false
+}
+
+/** Pedido curto de consultor/atendente neste canal (não existe). */
+export function messageAsksConsultantOnThisChannel(text) {
+  const t = normalize(text)
+  if (!t || t.length > 90) return false
+  if (/^(consultor|atendente|humano)[.!\s]*$/i.test(t)) return true
+  if (/\bquero\s+(falar\s+com\s+)?(um\s+)?(consultor|atendente|humano)\b/i.test(t)) return true
+  if (
+    /\b(pode|podem)\s+(me\s+)?(passar|encaminhar|transferir)\s+(para|pra|pro)\s+(um\s+)?(consultor|atendente)\b/i.test(
+      t,
+    )
+  ) {
+    return true
+  }
+  return false
+}
+
+/** Lead aceitou oferta de consultor do assistente (ex.: "Por gentileza"). */
+export function messageConfirmsConsultantOffer(text, historyMessages = []) {
+  if (!assistantOfferedConsultant(lastAssistantText(historyMessages))) return false
+  const t = normalize(text)
+  if (!t || t.length > 80) return false
+  if (/^(por\s+gentileza|por\s+favor|pfv|sim|pode|quero|isso|ok)[.!\s]*$/i.test(t)) return true
+  if (messageAsksConsultantOnThisChannel(text)) return true
   return false
 }
 

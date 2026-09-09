@@ -51,7 +51,7 @@ export function buildExitChannelLinksReply(opts = {}) {
 export function buildFacultyContactRedirectReply(opts = {}) {
   return (
     `Peço desculpas${firstNameBit(opts.pushName)}, não consegui concluir isso por aqui. ` +
-    `Para seguir, fale diretamente com a Faculdade Sumaré pelo canal oficial de atendimento/consultoria:\n\n` +
+    `Para seguir, fale diretamente com a Faculdade Sumaré pelo canal oficial de atendimento:\n\n` +
     `*Atendimento Sumaré:* ${SUMARE_ATENDIMENTO_URL}\n\n` +
     `Se preferir, também pode contar com a *Ouvidoria* (reclamações, sugestões e elogios):\n\n` +
     `*Ouvidoria Sumaré:* ${SUMARE_OUVIDORIA_URL}\n\n` +
@@ -65,7 +65,7 @@ export function replyLooksLikeFacultyContactRedirect(text) {
   if (!t.trim()) return false
   return (
     /n[aã]o consegui concluir isso por aqui/i.test(t) ||
-    (t.includes(SUMARE_ATENDIMENTO_URL) && /atendimento\/consultoria|Ouvidoria Sumar/i.test(t))
+    (t.includes(SUMARE_ATENDIMENTO_URL) && /atendimento oficial|Ouvidoria Sumar/i.test(t))
   )
 }
 

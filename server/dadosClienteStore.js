@@ -101,6 +101,9 @@ export function decideHoldOnIaPause(row) {
   if (status === 'comprovante_pagamento_recebido') {
     return { hold: false, paused: true, reason: 'comprovante_pos_matricula' }
   }
+  if (status === 'aguardando_dados_cadastro') {
+    return { hold: false, paused: true, reason: 'aguardando_dados_cadastro' }
+  }
   if (captacaoStarted) {
     return { hold: true, paused: true, reason: 'aguardando_aceite_ou_captacao' }
   }

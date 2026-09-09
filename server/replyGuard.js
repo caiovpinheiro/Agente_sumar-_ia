@@ -18,7 +18,9 @@
 import { buildPoloEscolhaPreFormMessage } from '../libShared/sumarePoloCatalog.js'
 import {
   buildAcademicAffairsRedirectReply,
+  buildPresencialClassDaysRedirectReply,
   messageAsksAcademicAffairsSupport,
+  messageAsksPresencialClassDays,
 } from '../libShared/academicAffairsHeuristics.js'
 import {
   DEFAULT_LGPD_SENSITIVE_REFUSAL,
@@ -47,6 +49,10 @@ const CAPTACAO_DONE_RX =
 
 const CONSULTOR_PROMISE_RX =
   /\b(consultor|atendente|equipe|nossa equipe)\b[\s\S]{0,80}\b(entrar[aá] em contato|vai te chamar|retornar|ligar|contato em breve)\b/i
+
+/** Oferecer consultor como próximo passo — também é proibido. */
+const CONSULTOR_OFFER_RX =
+  /\b(verifique|verificar|passo|passar|encaminh|direcion|fale com|falar com)\b[\s\S]{0,70}\bconsultor\b|\bquer que eu verifique com um consultor\b|\bpassar pra um consultor\b|\bpassar para um consultor\b|\bcom um consultor os detalhes\b/i
 
 const TRANSFERENCIA_REGISTER_RX =
   /\b(registr(?:ei|ar)|pedido de transfer[eê]ncia)\b/i
@@ -146,18 +152,15 @@ export function validateReplyAgainstActions({ reply, toolCalls = [], stage = nul
 }
 
 /**
- * Bloqueia promessa de consultor sem ter acionado distribuir_humano ou concluído
- * ação de inscrição/transferência neste turno.
+ * Bloqueia promessa ou oferta de consultor. Não há consultor neste canal.
  */
-export function validateReplyConsultorPromise({ reply, toolCalls = [] } = {}) {
+export function validateReplyConsultorPromise({ reply, toolCalls = [], userMessage = '' } = {}) {
   const text = String(reply || '')
   if (!text || text.length < 8) return { violation: false }
-  if (!CONSULTOR_PROMISE_RX.test(text)) return { violation: false }
-  if (toolWasCalledOk(toolCalls, ['distribuir_humano'])) return { violation: false }
-  if (toolWasCalledOk(toolCalls, ['registrar_transferencia', 'enviar_form_sumar_inscricao', 'registrar_polo_inscricao'])) {
-    return { violation: false }
-  }
-  if (TRANSFERENCIA_REGISTER_RX.test(text)) {
+  const offers = CONSULTOR_PROMISE_RX.test(text) || CONSULTOR_OFFER_RX.test(text)
+  if (!offers) return { violation: false }
+  void toolCalls
+  if (TRANSFERENCIA_REGISTER_RX.test(text) && CONSULTOR_PROMISE_RX.test(text) && !CONSULTOR_OFFER_RX.test(text)) {
     return {
       violation: true,
       code: 'transferencia_consultor_without_tool',
@@ -166,11 +169,13 @@ export function validateReplyConsultorPromise({ reply, toolCalls = [] } = {}) {
       original: text,
     }
   }
+  const safeReply = messageAsksPresencialClassDays(userMessage)
+    ? buildPresencialClassDaysRedirectReply({})
+    : buildFacultyContactRedirectReply({})
   return {
     violation: true,
-    code: 'consultor_promise_without_handoff',
-    safeReply:
-      'Posso continuar te ajudando por aqui com a matrícula ou transferência. Me confirma qual curso você quer cursar na Sumaré para eu seguir com o próximo passo?',
+    code: 'consultor_offer_or_promise',
+    safeReply,
     original: text,
   }
 }
@@ -243,7 +248,7 @@ export function validateReplyBeforeSend({ reply, toolCalls = [], stage = null, u
     }
   }
 
-  const consultorVerdict = validateReplyConsultorPromise({ reply, toolCalls })
+  const consultorVerdict = validateReplyConsultorPromise({ reply, toolCalls, userMessage })
   if (consultorVerdict.violation) return consultorVerdict
 
   let currentReply = reply
