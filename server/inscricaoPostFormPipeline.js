@@ -13,6 +13,7 @@ import {
   INSCRICAO_FORM_STATUS_AGUARDANDO_POLO_PRE_FORM,
   INSCRICAO_FORM_STATUS_AGUARDANDO_POLO,
   INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR,
+  INSCRICAO_FORM_STATUS_PROBLEMA_MAT,
   messageLooksLikeFormSumarResponse,
   messageIsFlowResponsesReceived,
   messageIsFormularioSumarPreenchidoMarker,
@@ -58,6 +59,7 @@ import {
 } from './dadosClienteStore.js'
 import { DADOS_CLIENTE_INSCRICAO_SELECT } from './dadosClienteInscricaoFields.js'
 import { isSumareCaptacaoEnabled } from './sumareCaptacaoClient.js'
+import { applyMatriculaProblemaHold, isMatriculaProblemaHoldEnabled } from './matriculaProblemaHold.js'
 import {
   leadHasPostFormRegistradoNote,
   leadHasPostFormRegistradoNoteSinceLastFormSend,
@@ -556,6 +558,33 @@ async function preparePoloStepAfterForm(env, { telefone, leadId, pushName }) {
  */
 export async function executeCaptacaoAfterFormResolved(env, ctx) {
   const { telefone, idLead, executionId, pushName, snapshotOverride } = ctx
+
+  if (isMatriculaProblemaHoldEnabled(env)) {
+    const hold = await applyMatriculaProblemaHold(env, {
+      telefone,
+      leadId: idLead,
+      executionId,
+      reason: 'captacao_after_form',
+    })
+    return {
+      ok: Boolean(hold.ok),
+      matriculaOk: false,
+      reply: null,
+      steps: [
+        {
+          type: 'problema_mat_hold',
+          ok: Boolean(hold.ok),
+          already: Boolean(hold.already),
+          code: hold.code,
+        },
+      ],
+      toolCalls: [],
+      ctxForm: INSCRICAO_FORM_STATUS_PROBLEMA_MAT,
+      skipSchedulerWhatsapp: true,
+      contratoWhatsappSent: false,
+    }
+  }
+
   const steps = []
   const toolCalls = []
   let reply = buildInscricaoFormCompleteReply({ pushName, ok: false })

@@ -30,6 +30,29 @@ export const EDUIT_DEFAULT_FORMULARIO_AUTOMATION_ID = 'cmtbpgc9909ato701am40ffww
 /** Tag EduIT "Formulario" — adicionar no deal dispara o WhatsApp Flow. */
 export const EDUIT_DEFAULT_FORMULARIO_TAG_ID = 'cmth9k8ne129wqm01rd7d464s'
 
+/** Tag EduIT "Problema_Mat" — hold temporário da matrícula (automação CRM). */
+export const EDUIT_DEFAULT_PROBLEMA_MAT_TAG_ID = 'cmubbeyk23753ld013ayyr9lm'
+
+/** Automação EduIT disparada pela tag Problema_Mat (não usar POST /run). */
+export const EDUIT_DEFAULT_PROBLEMA_MAT_AUTOMATION_ID = 'cmubbe71p36zbld01z049vy8x'
+
+export function isMatriculaProblemaHoldEnabled(env = process.env) {
+  const v = String(env?.MATRICULA_PROBLEMA_HOLD ?? 'true').trim().toLowerCase()
+  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no'
+}
+
+export function resolveEduitProblemaMatTagId(env = process.env) {
+  const fromEnv = String(env?.EDUIT_TAG_PROBLEMA_MAT_ID || '').trim()
+  if (fromEnv && isEduitCuid(fromEnv)) return fromEnv
+  return EDUIT_DEFAULT_PROBLEMA_MAT_TAG_ID
+}
+
+export function resolveEduitProblemaMatAutomationId(env = process.env) {
+  const fromEnv = String(env?.EDUIT_AUTOMATION_PROBLEMA_MAT_ID || '').trim()
+  if (fromEnv && isEduitCuid(fromEnv)) return fromEnv
+  return EDUIT_DEFAULT_PROBLEMA_MAT_AUTOMATION_ID
+}
+
 export function resolveEduitFormularioAutomationId(env = process.env) {
   const fromEnv = String(env?.EDUIT_AUTOMATION_FORMULARIO_SUM_ID || '').trim()
   if (fromEnv && isEduitCuid(fromEnv)) return fromEnv

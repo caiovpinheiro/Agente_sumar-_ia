@@ -32,6 +32,7 @@ import {
   INSCRICAO_FORM_STATUS_COMPROVANTE_RECEBIDO,
   INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
   INSCRICAO_FORM_STATUS_DESISTENCIA_CONCLUIDA,
+  INSCRICAO_FORM_STATUS_PROBLEMA_MAT,
 } from '../libShared/inscricaoFormHeuristics.js'
 import { assistantAskedPoloPreFormChoice } from '../libShared/sumarePoloCatalog.js'
 import { assistantAskedDesistenciaConfirm } from '../libShared/inscricaoDesistenciaHeuristics.js'
@@ -47,6 +48,7 @@ const TERMINAL_OR_ADVANCED_STAGES = new Set([
   INSCRICAO_FORM_STATUS_AGUARDANDO_DISTRIBUICAO,
   INSCRICAO_FORM_STATUS_AGUARDANDO,
   INSCRICAO_FORM_STATUS_DESISTENCIA_CONCLUIDA,
+  INSCRICAO_FORM_STATUS_PROBLEMA_MAT,
 ])
 
 /**

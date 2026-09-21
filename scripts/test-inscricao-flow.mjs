@@ -240,6 +240,7 @@ const env = {
   KOMMO_SALESBOT_MIN_INTERVAL_SEC: '0',
   INSCRICAO_FORM_DELIVERY: 'kommo_salesbot',
   SUMARE_CAPTACAO_ENABLED: 'false',
+  MATRICULA_PROBLEMA_HOLD: 'false',
 }
 
 const ctx = {
@@ -3664,6 +3665,118 @@ section('41 — Captação INFRA (SOFTSY_NOT_CONFIGURED): sem pausar / sem distr
       restoreFetch()
       invalidateCaptacaoCursoCache()
     }
+  }
+}
+
+section('42 — Hold temporário Problema_Mat')
+
+{
+  const { deliverInscricaoForm } = await import('../server/inscricaoFormFlow.js')
+  const holdEnv = {
+    ...env,
+    CRM_BACKEND: 'eduit',
+    EDUIT_BASE_URL: 'https://crm.example',
+    EDUIT_API_KEY: 'token',
+    MATRICULA_PROBLEMA_HOLD: 'true',
+    SUMARE_CAPTACAO_ENABLED: 'true',
+    SUMARE_CAPTACAO_BASE_URL: 'https://mock-captacao.sumare.edu.br',
+    SUMARE_CAPTACAO_TOKEN: 'mock-captacao-token',
+  }
+  const dealId = 'cmubdealhold0000000000001'
+  const formTagId = 'cmth9k8ne129wqm01rd7d464s'
+  const problemaMatTagId = 'cmubbeyk23753ld013ayyr9lm'
+
+  function holdFetchStub(row) {
+    return (call) => {
+      if (call.url.includes('/api/deals/') && call.url.includes('/tags')) {
+        return { status: 200, body: { ok: true } }
+      }
+      if (call.url.includes('/api/deals/') && call.url.includes('/notes')) {
+        return { status: 200, body: { id: 'note1' } }
+      }
+      if (call.url.includes('/api/deals/') && call.method === 'PUT') {
+        return { status: 200, body: { ok: true } }
+      }
+      if (String(call.url).includes('mock-captacao') || /candidato|contrato|gerar/i.test(call.url)) {
+        return { status: 500, body: { error: 'captação não deve ser chamada no hold' } }
+      }
+      return defaultSupabaseStub({ dadosClienteRow: row })(call)
+    }
+  }
+
+  installFetchStub(
+    holdFetchStub({ inscricao_form_status: 'matricula_autorizada', atendimento_ia: 'active' }),
+  )
+  try {
+    const delivery = await deliverInscricaoForm(holdEnv, {
+      telefone: ctx.telefone,
+      leadId: dealId,
+      executionId: 'EX-HOLD-FORM',
+    })
+    assertEqual(delivery.delivery, 'eduit_tag', '42.1 deliver segue Formulario sob hold')
+    assertEqual(delivery.result?.ok, true, '42.1b tag Formulario ok')
+    assertEqual(delivery.result?.code, 'FORMULARIO_TAG_APPLIED', '42.1c code Formulario')
+    assert(
+      fetchCalls.some(
+        (c) =>
+          c.method === 'POST' &&
+          c.url.includes(`/api/deals/${dealId}/tags`) &&
+          String(c.body || '').includes(formTagId),
+      ),
+      '42.2 POST tag Formulario',
+    )
+    assert(
+      !fetchCalls.some((c) => String(c.body || '').includes(problemaMatTagId)),
+      '42.3 NÃO aplica tag Problema_Mat no deliver',
+    )
+  } finally {
+    restoreFetch()
+  }
+
+  installFetchStub(
+    holdFetchStub({ inscricao_form_status: 'aguardando_distribuicao_form', atendimento_ia: 'active' }),
+  )
+  try {
+    const cap = await executeCaptacaoAfterFormResolved(holdEnv, {
+      telefone: ctx.telefone,
+      idLead: dealId,
+      executionId: 'EX-HOLD-CAP',
+      pushName: 'Lead',
+    })
+    assertEqual(cap.ctxForm, 'problema_mat_hold', '42.4 captação não roda — hold')
+    assert(cap.skipSchedulerWhatsapp === true, '42.5 skip WhatsApp da captação')
+    assert(cap.reply == null, '42.6 agente não manda texto (automação CRM avisa)')
+    assert(
+      (cap.steps || []).some((s) => s.type === 'problema_mat_hold' && s.ok),
+      '42.7 step problema_mat_hold',
+    )
+    assert(
+      !(cap.steps || []).some((s) => s.type === 'sumare_captacao'),
+      '42.8 NÃO chama runMatriculaCaptacaoAfterForm',
+    )
+    assert(
+      fetchCalls.some(
+        (c) =>
+          c.method === 'POST' &&
+          c.url.includes(`/api/deals/${dealId}/tags`) &&
+          String(c.body || '').includes(problemaMatTagId),
+      ),
+      '42.9 POST tag Problema_Mat na captação',
+    )
+    assert(
+      !fetchCalls.some((c) => String(c.body || '').includes(formTagId)),
+      '42.10 NÃO reaplica tag Formulario na captação',
+    )
+    assert(
+      !fetchCalls.some((c) => String(c.url).includes('mock-captacao')),
+      '42.11 NÃO chama API de captação/matrícula',
+    )
+    assert(
+      !fetchCalls.some((c) => c.url.includes('/automations/run')),
+      '42.12 NÃO dispara POST /automations/run',
+    )
+  } finally {
+    restoreFetch()
   }
 }
 

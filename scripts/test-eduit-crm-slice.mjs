@@ -1111,6 +1111,44 @@ expect('logConversationNote sem conv', noteMissing.ok === false && noteMissing.c
 }
 
 {
+  const {
+    EDUIT_DEFAULT_PROBLEMA_MAT_TAG_ID,
+    EDUIT_DEFAULT_PROBLEMA_MAT_AUTOMATION_ID,
+    isMatriculaProblemaHoldEnabled,
+    resolveEduitProblemaMatTagId,
+    resolveEduitProblemaMatAutomationId,
+  } = await import('../server/eduitClient.js')
+  const {
+    INSCRICAO_FORM_STATUS_PROBLEMA_MAT,
+    shouldBlockFormularioSumResend,
+    matriculaPosFormAlreadyProcessed,
+  } = await import('../libShared/inscricaoFormHeuristics.js')
+  expect(
+    'problema_mat tag default',
+    resolveEduitProblemaMatTagId({}) === EDUIT_DEFAULT_PROBLEMA_MAT_TAG_ID,
+  )
+  expect(
+    'problema_mat automation default',
+    resolveEduitProblemaMatAutomationId({}) === EDUIT_DEFAULT_PROBLEMA_MAT_AUTOMATION_ID,
+  )
+  expect('hold ligado por padrao', isMatriculaProblemaHoldEnabled({}) === true)
+  expect(
+    'hold desliga com false',
+    isMatriculaProblemaHoldEnabled({ MATRICULA_PROBLEMA_HOLD: 'false' }) === false,
+  )
+  expect(
+    'status problema_mat_hold bloqueia reenvio do form',
+    shouldBlockFormularioSumResend({ inscricao_form_status: INSCRICAO_FORM_STATUS_PROBLEMA_MAT }) ===
+      true,
+  )
+  expect(
+    'hold e terminal pos-form',
+    matriculaPosFormAlreadyProcessed({ inscricao_form_status: INSCRICAO_FORM_STATUS_PROBLEMA_MAT }) ===
+      true,
+  )
+}
+
+{
   expect('cpf checksum rejeita repetido', isValidCpfDigits('11111111111') === false)
   expect(
     'cpf extraido com rotulo',

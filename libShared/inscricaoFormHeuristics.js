@@ -50,6 +50,8 @@ export const INSCRICAO_FORM_STATUS_API_SUMARE_AGUARDANDO_CPF = 'api_sumare_aguar
 export const INSCRICAO_FORM_STATUS_AGUARDANDO_CONFIRM_DESISTENCIA = 'aguardando_confirm_desistencia'
 /** Desistência confirmada — lead movido para fila de perda e IA pausada. */
 export const INSCRICAO_FORM_STATUS_DESISTENCIA_CONCLUIDA = 'desistencia_concluida'
+/** Hold temporário: matrícula bloqueada — tag Problema_Mat no EduIT. */
+export const INSCRICAO_FORM_STATUS_PROBLEMA_MAT = 'problema_mat_hold'
 
 const MATRICULA_POS_FORM_TERMINAL_STATUSES = new Set([
   INSCRICAO_FORM_STATUS_CONCLUIDO,
@@ -57,6 +59,7 @@ const MATRICULA_POS_FORM_TERMINAL_STATUSES = new Set([
   INSCRICAO_FORM_STATUS_COMPROVANTE_RECEBIDO,
   INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR,
   INSCRICAO_FORM_STATUS_DESISTENCIA_CONCLUIDA,
+  INSCRICAO_FORM_STATUS_PROBLEMA_MAT,
 ])
 
 /** Em andamento — não reprocessar pós-form nem salesbot 49813. */
@@ -108,6 +111,7 @@ const INSCRICAO_FORM_FILLED_STATUSES = new Set([
   INSCRICAO_FORM_STATUS_COMPROVANTE_RECEBIDO,
   INSCRICAO_FORM_STATUS_DISTRIBUIR_CONSULTOR,
   INSCRICAO_FORM_STATUS_DESISTENCIA_CONCLUIDA,
+  INSCRICAO_FORM_STATUS_PROBLEMA_MAT,
 ])
 
 /**
@@ -153,6 +157,7 @@ export function shouldBlockFormularioSumResend(row, opts = {}) {
   // então sobrevive a restarts/deploys. Reenvio só com pedido explícito do
   // lead (opts.allowExplicitResend, ex.: "não recebi o formulário").
   if (status === INSCRICAO_FORM_STATUS_AGUARDANDO) return true
+  if (status === INSCRICAO_FORM_STATUS_PROBLEMA_MAT) return true
   // Fluxos paralelos em andamento que o Formulario_Sum não deve atropelar.
   if (status === INSCRICAO_FORM_STATUS_AGUARDANDO_CONFIRM_POLO_KOMMO) return true
   if (status === INSCRICAO_FORM_STATUS_AGUARDANDO_CONFIRM_DESISTENCIA) return true

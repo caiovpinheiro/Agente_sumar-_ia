@@ -651,7 +651,10 @@ export async function runInscricaoFormStart(env, body) {
     const claim = await claimInscricaoFormStartExclusive(env, telefone, idLead)
     if (!claim.claimed) {
       const st = claim.status ?? (await getFormStatus(env, telefone))
-      if (st === INSCRICAO_FORM_STATUS_AGUARDANDO || st === INSCRICAO_FORM_STATUS_CONCLUIDO) {
+      if (
+        st === INSCRICAO_FORM_STATUS_AGUARDANDO ||
+        st === INSCRICAO_FORM_STATUS_CONCLUIDO
+      ) {
         return {
           ok: true,
           skipped: true,

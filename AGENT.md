@@ -12,6 +12,13 @@ Histórico das decisões estruturais do agente. Formato por entrada:
 
 ---
 
+### 2026-09-21 - Hold temporário da matrícula (tag Problema_Mat)
+- **Modelo usado**: Cursor Grok 4.6
+- **Decisão**: Coleta de cadastro e disparo do Formulario **continuam**. Somente imediatamente antes da matrícula/captação (`executeCaptacaoAfterFormResolved`) o agente interrompe, aplica a tag EduIT `Problema_Mat` (`cmubbeyk23753ld013ayyr9lm`) e **não** executa a captação. A automação CRM `cmubbe71p36zbld01z049vy8x` avisa o lead. Sem `POST /automations/run` (401). Sem WhatsApp extra do agente nesse ponto. Status `problema_mat_hold` + pause da IA. Liga por padrão; desliga com `MATRICULA_PROBLEMA_HOLD=false`. Idempotente: se o status já é hold, não re-aplica a tag.
+- **Contexto**: Finalização da inscrição (matrícula/captação) indisponível. Workaround operacional combinado com o CRM.
+- **Alternativas descartadas**: Bloquear também o Formulario (impede coleta/cadastro); disparar a automação via API; mandar o texto pelo agente (duplicaria o WhatsApp da automação).
+- **Impacto**: Cadastro e formulário seguem normais. Matrícula automática fica suspensa até o env ser desligado; no ponto de captação o lead recebe só a mensagem da automação.
+
 ### 2026-09-09 - Falha de configuração/rede na captação não queima o lead
 - **Modelo usado**: Cursor Grok 4.6 (não confirmado)
 - **Decisão**: `CAPTACAO_NOT_CONFIGURED`, `SOFTSY_NOT_CONFIGURED` e `CAPTACAO_FETCH_FAILED` (`CAPTACAO_INFRA_FAIL_CODES`) deixam de ser falha terminal: não pausam a IA, não gravam status nenhum e só registram `captacao_infra_fail` + nota de auditoria. O lead só recebe mensagem ("estamos processando, em instantes o link") quando existe turno dele; em `schedulerTick` o reply fica vazio, para não prometer nada a quem não está esperando. `GERAR_FAILED`, `CANDIDATO_ID_MISSING` e `MULTIPLE_INSCRICOES_PORTAL` seguem terminais — são recusa do portal, não credencial ausente.

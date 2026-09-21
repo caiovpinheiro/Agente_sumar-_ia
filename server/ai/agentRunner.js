@@ -2106,6 +2106,49 @@ export async function runAgent(env, input) {
         const actionOverride = actionResults.find(
           (a) => a.result && typeof a.result.replyOverride === 'string' && a.result.replyOverride.trim().length > 0,
         )
+        const silentHold = actionResults.find(
+          (a) =>
+            a.result?.skipLeadReply === true ||
+            a.result?.code === 'PROBLEMA_MAT_HOLD',
+        )
+        if (silentHold && !actionOverride) {
+          const ar = silentHold.result
+          const stageBefore = formFlowCtx.stageBefore || null
+          const stageAfter = ar.ctxSnapshot?.inscricaoForm || null
+          console.log(
+            `[${executionId}] TOOL_ACTION_SILENT_HOLD tool=${silentHold.tool} code=${ar.code} stage=${stageBefore || '?'}→${stageAfter || '?'}`,
+          )
+          orchestratorSteps.push({
+            type: 'problema_mat_hold',
+            tool: silentHold.tool,
+            code: ar.code,
+            ok: Boolean(ar.ok),
+            stage_before: stageBefore,
+            stage_after: stageAfter,
+            durationMs: Date.now() - roundT0,
+          })
+          for (const s of ar.steps || []) orchestratorSteps.push(s)
+          return {
+            ok: true,
+            reply: null,
+            toolCalls: toolTrace,
+            orchestratorSteps,
+            ctxSnapshot: {
+              ...ctxSnapshot,
+              ...(ar.ctxSnapshot || {}),
+              replySource: 'problema_mat_hold',
+              actionTool: silentHold.tool,
+              actionCode: ar.code,
+            },
+            usage,
+            durationMs: Date.now() - t0,
+            historyLoaded: historyMessages.length,
+            executionId,
+            model,
+            aiMeta: ctx.toAiMeta(),
+            inscricaoActionHandled: true,
+          }
+        }
         if (actionOverride) {
           const ar = actionOverride.result
           const stageBefore = formFlowCtx.stageBefore || null

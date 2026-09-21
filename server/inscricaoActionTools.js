@@ -62,6 +62,7 @@ import { fetchLeadFormSnapshot } from './inscricaoKommoFields.js'
 import { DADOS_CLIENTE_FORM_GUARD_SELECT } from './dadosClienteInscricaoFields.js'
 import { gateMatriculaConfirmacaoBeforeForm } from './inscricaoMatriculaConfirmFlow.js'
 import { syncSumPoloOnLeadQuiet } from './sumareLeadFields.js'
+import { problemaMatHoldToolReturn } from './matriculaProblemaHold.js'
 import {
   buildFacultyContactRedirectReply,
   replyLooksLikeFacultyContactRedirect,
@@ -435,6 +436,21 @@ async function runTransferenciaRecaptacaoPosForm(
     pushName,
     confirmedNovaInscricao: true,
   })
+
+  if (cap.steps?.some((s) => s?.type === 'problema_mat_hold')) {
+    if (cap.ok) return problemaMatHoldToolReturn({ tool: 'registrar_transferencia' })
+    return {
+      ok: false,
+      code: cap.steps[0]?.code || 'PROBLEMA_MAT_HOLD_FAILED',
+      text: 'Hold da matrícula falhou ao aplicar a tag Problema_Mat.',
+      replyOverride: buildFacultyContactRedirectReply({ pushName }),
+      ctxSnapshot: {
+        inscricaoActionTool: 'registrar_transferencia',
+        inscricaoForm: cap.ctxForm,
+      },
+      steps: cap.steps || [],
+    }
+  }
 
   const nameBit = pushName ? `, ${String(pushName).split(/\s+/)[0]}` : ''
   const semestreBit = semestre ? ` (último semestre concluído: ${semestre})` : ''
@@ -961,6 +977,21 @@ export async function runConfirmarRecebimentoFormulario(env, args = {}, ctx = {}
     confirmedNovaInscricao: Boolean(ctx.confirmedNovaInscricao),
     useCandidatoId: ctx.useCandidatoId,
   })
+
+  if (cap.steps?.some((s) => s?.type === 'problema_mat_hold')) {
+    if (cap.ok) return problemaMatHoldToolReturn({ tool: 'confirmar_recebimento_formulario' })
+    return {
+      ok: false,
+      code: cap.steps[0]?.code || 'PROBLEMA_MAT_HOLD_FAILED',
+      text: 'Hold da matrícula falhou ao aplicar a tag Problema_Mat.',
+      replyOverride: buildFacultyContactRedirectReply({ pushName }),
+      ctxSnapshot: {
+        inscricaoActionTool: 'confirmar_recebimento_formulario',
+        inscricaoForm: cap.ctxForm,
+      },
+      steps: cap.steps || [],
+    }
+  }
 
   if (cap.ok) {
     return {
