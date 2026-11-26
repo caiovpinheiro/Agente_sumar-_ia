@@ -136,17 +136,27 @@ async function maybeReactivationSweep(env, stats) {
   }
 }
 
+/**
+ * Lê config do scheduler: AGENT_SCHEDULER_<KEY> (nome atual, CRM-agnóstico)
+ * com fallback para o legado KOMMO_SCHEDULER_<KEY>.
+ */
+export function schedulerEnv(env, key) {
+  const v = env?.[`AGENT_SCHEDULER_${key}`]
+  if (v !== undefined && String(v).trim() !== '') return v
+  return env?.[`KOMMO_SCHEDULER_${key}`]
+}
+
 function isSchedulerVerbose(env) {
-  return ['true', '1', 'yes'].includes(String(env.KOMMO_SCHEDULER_VERBOSE || '').trim().toLowerCase())
+  return ['true', '1', 'yes'].includes(String(schedulerEnv(env, 'VERBOSE') || '').trim().toLowerCase())
 }
 
 /** Quando o funil Kommo está vazio, ainda processar buffer preenchido só pelo webhook Evolution. */
 function isWebhookOrphanFlushEnabled(env) {
-  return ['true', '1', 'yes'].includes(String(env.KOMMO_SCHEDULER_WEBHOOK_ORPHAN_FLUSH || '').trim().toLowerCase())
+  return ['true', '1', 'yes'].includes(String(schedulerEnv(env, 'WEBHOOK_ORPHAN_FLUSH') || '').trim().toLowerCase())
 }
 
 function getOrphanSessionCap(env) {
-  const v = Number(env.KOMMO_SCHEDULER_ORPHAN_SESSION_CAP)
+  const v = Number(schedulerEnv(env, 'ORPHAN_SESSION_CAP'))
   return Number.isFinite(v) && v > 0 ? Math.min(80, Math.floor(v)) : 25
 }
 
@@ -206,13 +216,13 @@ async function tryFlushWebhookOrphanSessions(env, { debounceMs, stats }) {
 }
 
 function getIntervalMs(env) {
-  const v = Number(env.KOMMO_SCHEDULER_INTERVAL_SEC)
+  const v = Number(schedulerEnv(env, 'INTERVAL_SEC'))
   const sec = Number.isFinite(v) && v > 0 ? Math.floor(v) : DEFAULT_INTERVAL_SEC
   return sec * 1000
 }
 
 function getDebounceMs(env) {
-  const v = Number(env.KOMMO_SCHEDULER_DEBOUNCE_SEC)
+  const v = Number(schedulerEnv(env, 'DEBOUNCE_SEC'))
   const sec = Number.isFinite(v) && v > 0 ? Math.floor(v) : DEFAULT_DEBOUNCE_SEC
   return sec * 1000
 }
@@ -225,7 +235,7 @@ function getDebounceMs(env) {
  */
 const DEFAULT_LEAD_CONCURRENCY = 3
 function getLeadConcurrency(env) {
-  const v = Number(env.KOMMO_SCHEDULER_LEAD_CONCURRENCY)
+  const v = Number(schedulerEnv(env, 'LEAD_CONCURRENCY'))
   const n = Number.isFinite(v) && v > 0 ? Math.floor(v) : DEFAULT_LEAD_CONCURRENCY
   return Math.min(10, Math.max(1, n))
 }
@@ -250,7 +260,7 @@ async function mapWithConcurrency(items, worker, limit) {
 }
 
 function isEnabled(env) {
-  const flag = String(env.KOMMO_SCHEDULER_ENABLED || '').trim().toLowerCase()
+  const flag = String(schedulerEnv(env, 'ENABLED') || '').trim().toLowerCase()
   if (flag === 'false' || flag === '0' || flag === 'no') return false
   if (isEduitBackend(env)) {
     return Boolean(String(env.EDUIT_BASE_URL || '').trim() && String(env.EDUIT_API_KEY || '').trim())
@@ -687,7 +697,7 @@ export async function runSchedulerTick(env) {
 export function startAgentScheduler(env) {
   if (intervalHandle) return { started: false, reason: 'already_running' }
   if (!isEnabled(env)) {
-    return { started: false, reason: 'disabled (KOMMO_SCHEDULER_ENABLED=false ou falta KOMMO_BASE_URL/token)' }
+    return { started: false, reason: 'disabled (AGENT_SCHEDULER_ENABLED=false ou falta credencial do CRM)' }
   }
   const intervalMs = getIntervalMs(env)
   const tick = () => {

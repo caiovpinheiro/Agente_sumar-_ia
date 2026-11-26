@@ -105,7 +105,7 @@ import { phoneToWhatsAppSessionId } from './server/phoneWhatsApp.js'
 import { getDebounceMs } from './server/evolution/debouncer.js'
 import { runAgent } from './server/ai/agentRunner.js'
 import { classifyMessageScope } from './server/ai/scopeClassifier.js'
-import { startAgentScheduler, runSchedulerTick, isSchedulerRunning } from './server/agentScheduler.js'
+import { startAgentScheduler, runSchedulerTick, isSchedulerRunning, schedulerEnv } from './server/agentScheduler.js'
 import { tryProactiveGreet, isProactiveGreetEnabled } from './server/proactiveGreet.js'
 import { getKommoRateLimiterSnapshot } from './server/kommoRateLimiter.js'
 import { maybeFallbackPollModeWhenDispatcherDown, normalizeKommoInboundPollMode } from './server/kommoInboundPoll.js'
@@ -1228,12 +1228,12 @@ app.get('/api/evolution/health', async (req, res) => {
       debounceMs: getDebounceMs(process.env),
       scheduler: {
         running: isSchedulerRunning(),
-        intervalSec: Number(process.env.KOMMO_SCHEDULER_INTERVAL_SEC) || 30,
-        debounceSec: Number(process.env.KOMMO_SCHEDULER_DEBOUNCE_SEC) || 15,
+        intervalSec: Number(schedulerEnv(process.env, 'INTERVAL_SEC')) || 30,
+        debounceSec: Number(schedulerEnv(process.env, 'DEBOUNCE_SEC')) || 15,
         pipelineId: process.env.KOMMO_AGENT_PIPELINE_ID || null,
         statusId: process.env.KOMMO_AGENT_STATUS_ID || null,
         webhookOrphanFlush: ['true', '1', 'yes'].includes(
-          String(process.env.KOMMO_SCHEDULER_WEBHOOK_ORPHAN_FLUSH || '').trim().toLowerCase(),
+          String(schedulerEnv(process.env, 'WEBHOOK_ORPHAN_FLUSH') || '').trim().toLowerCase(),
         ),
       },
     })
@@ -2339,16 +2339,16 @@ app.get('/api/agent/diagnose', async (req, res) => {
     timestamp: new Date().toISOString(),
     scheduler: {
       running: isSchedulerRunning(),
-      intervalSec: Number(env.KOMMO_SCHEDULER_INTERVAL_SEC) || 10,
-      debounceSec: Number(env.KOMMO_SCHEDULER_DEBOUNCE_SEC) || 5,
+      intervalSec: Number(schedulerEnv(env, 'INTERVAL_SEC')) || 10,
+      debounceSec: Number(schedulerEnv(env, 'DEBOUNCE_SEC')) || 5,
       pipelineId: env.KOMMO_AGENT_PIPELINE_ID || null,
       statusId: env.KOMMO_AGENT_STATUS_ID || null,
-      enabledFlag: env.KOMMO_SCHEDULER_ENABLED ?? null,
+      enabledFlag: schedulerEnv(env, 'ENABLED') ?? null,
       testWhitelist: env.KOMMO_AGENT_TEST_LEAD_IDS || null,
       inboundPollEnabled: String(env.KOMMO_INBOUND_POLL_ENABLED || 'false').toLowerCase() === 'true',
       inboundPollMode: normalizeKommoInboundPollMode(env.KOMMO_INBOUND_POLL_MODE),
       warmupFreshSec: env.KOMMO_INBOUND_WARMUP_FRESH_SEC || '120 (default)',
-      leadConcurrency: Number(env.KOMMO_SCHEDULER_LEAD_CONCURRENCY) || 3,
+      leadConcurrency: Number(schedulerEnv(env, 'LEAD_CONCURRENCY')) || 3,
       kommoRateLimiter: getKommoRateLimiterSnapshot(),
     },
     secrets: {
@@ -2499,7 +2499,7 @@ app.get('/api/agent/diagnose', async (req, res) => {
   }
   if (!out.scheduler.running) {
     out.nextSteps.push(
-      'Scheduler NÃO está rodando neste processo. Verifique o KOMMO_SCHEDULER_ENABLED e se KOMMO_BASE_URL/KOMMO_ACCESS_TOKEN estão setados.',
+      'Scheduler NÃO está rodando neste processo. Verifique AGENT_SCHEDULER_ENABLED e as credenciais do CRM (EDUIT_BASE_URL/EDUIT_API_KEY).',
     )
   }
   if (!out.scheduler.inboundPollEnabled) {
@@ -2561,17 +2561,17 @@ app.post('/api/scheduler/tick', async (_req, res) => {
 app.get('/api/scheduler/funnel', async (req, res) => {
   const env = process.env
   const enabled = (() => {
-    const flag = String(env.KOMMO_SCHEDULER_ENABLED || '').trim().toLowerCase()
+    const flag = String(schedulerEnv(env, 'ENABLED') || '').trim().toLowerCase()
     if (flag === 'false' || flag === '0' || flag === 'no') return false
     return Boolean(env.KOMMO_AGENT_PIPELINE_ID && env.KOMMO_AGENT_STATUS_ID && env.KOMMO_BASE_URL && env.KOMMO_ACCESS_TOKEN)
   })()
   const pipelineId = env.KOMMO_AGENT_PIPELINE_ID ? Number(env.KOMMO_AGENT_PIPELINE_ID) : null
   const statusId = env.KOMMO_AGENT_STATUS_ID ? Number(env.KOMMO_AGENT_STATUS_ID) : null
-  const intervalSec = Number(env.KOMMO_SCHEDULER_INTERVAL_SEC) || 10
-  const debounceSec = Number(env.KOMMO_SCHEDULER_DEBOUNCE_SEC) || 5
+  const intervalSec = Number(schedulerEnv(env, 'INTERVAL_SEC')) || 10
+  const debounceSec = Number(schedulerEnv(env, 'DEBOUNCE_SEC')) || 5
   const debounceMs = debounceSec * 1000
   const orphanFlush = ['true', '1', 'yes'].includes(
-    String(env.KOMMO_SCHEDULER_WEBHOOK_ORPHAN_FLUSH || '').trim().toLowerCase(),
+    String(schedulerEnv(env, 'WEBHOOK_ORPHAN_FLUSH') || '').trim().toLowerCase(),
   )
   const whitelistRaw = String(env.KOMMO_AGENT_TEST_LEAD_IDS || '').trim()
   const whitelist = whitelistRaw
